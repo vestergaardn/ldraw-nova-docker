@@ -10,6 +10,8 @@ import modal
 ROOT = Path(__file__).resolve().parents[1]
 app = modal.App('lego-nova')
 image = modal.Image.from_dockerfile(ROOT / 'hosting' / 'Dockerfile.cloud', context_dir=ROOT)
+# Modal volumes require an empty mount point; startup creates these folders.
+image = image.run_commands('rmdir /data/generated /data/chats /data/output')
 # Mount source separately: Python edits do not rebuild the CAD toolchain.
 # The companion toolkit checkout is the same one used by local Docker builds.
 image = image.add_local_dir(ROOT / 'web' / 'backend', '/app/web/backend',
