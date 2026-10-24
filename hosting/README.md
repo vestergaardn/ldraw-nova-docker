@@ -67,6 +67,9 @@ environment. It validates the model, checks the independently rendered parts
 count, and prints subassembly instructions before their parents. It does not
 invent a physically proven assembly sequence. Models without building steps
 need those steps added first. There is no additional AI call for PDF generation.
+The current PDF limits are 2,000 pieces, 250 saved steps, a 5 MB source file,
+and 30 minutes of rendering. The server runs one render at a time and queues
+at most four guide jobs. Larger models need smaller subassembly files.
 
 To print a folded booklet, open the PDF in a reader with Booklet printing.
 Use Letter paper, both sides, and short-edge binding. PDF pages are Half Letter,
