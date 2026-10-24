@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci --prefix web/frontend --no-audit --no-fund",
+  "buildCommand": "npm run build --prefix web/frontend",
+  "outputDirectory": "web/frontend/dist",
+  "functions": { "api/proxy.mjs": { "maxDuration": 300 } },
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/proxy?__route=api/:path*" },
+    { "source": "/files/:path*", "destination": "/api/proxy?__route=files/:path*" },
+    { "source": "/gallery-files/:path*", "destination": "/api/proxy?__route=gallery-files/:path*" },
+    { "source": "/demo/:path*", "destination": "/api/proxy?__route=demo/:path*" },
+    { "source": "/ldraw/:path*", "destination": "/api/proxy?__route=ldraw/:path*" },
+    { "source": "/ldraw-id/:path*", "destination": "/api/proxy?__route=ldraw-id/:path*" },
+    { "source": "/viewer/:path*", "destination": "/api/proxy?__route=viewer/:path*" },
+    { "source": "/xr/:path*", "destination": "/api/proxy?__route=xr/:path*" },
+    { "source": "/((?!api|assets|files|gallery-files|demo|ldraw|ldraw-id|viewer|xr).*)", "destination": "/index.html" }
+  ]
+}

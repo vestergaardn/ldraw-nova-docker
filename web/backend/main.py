@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 import agent
+import booklets
 import gallery
 import glb
 import llm_config
@@ -54,6 +55,7 @@ async def lifespan(_app: FastAPI):
     sandbox.give_to_agent(settings.GENERATED_DIR)      # agent scripts may publish models there
     get_store()
     yield
+    await booklets.shutdown()
     await browser_auth.shutdown()
     for chat_id in list(agent._runs):
         await agent.cancel(chat_id)
@@ -539,7 +541,7 @@ async def models_delete(filename: str):
             or model.suffix.lower() not in MODEL_SUFFIXES or model.is_symlink()
             or not model.is_file()):
         _not_found("Model not found")
-    if model in gallery.publishing or gallery._current == model or render.is_busy(model) or glb.is_converting(model):
+    if model in gallery.publishing or gallery._current == model or render.is_busy(model) or glb.is_converting(model) or booklets.is_busy(model):
         raise HTTPException(409, "This model is still being processed. Try deleting it again when processing finishes.")
     # Notes/previews are shared if car.mpd and car.ldr both exist: retain those.
     shared = any(p != model and p.stem == model.stem for p in gallery.collection(root))
@@ -581,6 +583,42 @@ async def model_glb(url: str):
         raise HTTPException(500, str(exc)) from None
     return FileResponse(out, media_type="model/gltf-binary", filename=model.stem + ".glb",
                         headers={"Cache-Control": "no-cache"})
+
+
+class AssemblyGuideRequest(BaseModel):
+    url: str = Field(max_length=2048)
+
+
+@app.post("/api/assembly-guides", status_code=202)
+async def assembly_guide_create(body: AssemblyGuideRequest):
+    model = model_from_url(body.url) or _not_found("not a model in My Models or Gallery")
+    try:
+        return await booklets.start(model)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc)) from None
+
+
+@app.get("/api/assembly-guides/{job_id}")
+def assembly_guide_status(job_id: str):
+    try:
+        result = booklets.status(job_id)
+    except (ValueError, FileNotFoundError):
+        return _not_found("Unknown assembly guide")
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/assembly-guides/{job_id}/pdf")
+def assembly_guide_pdf(job_id: str):
+    try:
+        result = booklets.status(job_id)
+    except (ValueError, FileNotFoundError):
+        return _not_found("Unknown assembly guide")
+    if result['status'] != 'ready':
+        raise HTTPException(409, "The assembly guide is not ready yet")
+    return FileResponse(booklets.directory(job_id) / 'booklet.pdf', media_type='application/pdf',
+                        filename=result['filename'], headers={"Cache-Control": "private, no-store"})
 
 
 def collection_zip(folder: Path, filename: str):

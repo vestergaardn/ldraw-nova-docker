@@ -1,6 +1,10 @@
 // Typed client for the FastAPI backend (web/backend/main.py).
 
 export type SnapshotStatus = "ready" | "queued" | "rendering" | "failed" | "missing";
+export type AssemblyGuide = {
+  id: string; status: "queued" | "rendering" | "ready" | "failed";
+  download_url?: string; pages?: number; parts?: number; steps?: number; error?: string;
+};
 
 /** A model file in data/generated, or in the bundled gallery. */
 export type ModelFile = {
@@ -107,6 +111,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown) => JSON.stringify(body);
 
 export const api = {
+  createAssemblyGuide: (url: string) => request<AssemblyGuide>("/api/assembly-guides", { method: "POST", body: json({ url }) }),
+  assemblyGuide: (id: string) => request<AssemblyGuide>(`/api/assembly-guides/${id}`),
   environment: () => request<{ variables: EnvironmentVariable[] }>("/api/environment"),
   checkEnvironment: (name: string, id?: string) => request<{ preconfigured: boolean; saved: boolean }>(`/api/environment/check?name=${encodeURIComponent(name)}&exclude_id=${encodeURIComponent(id ?? "")}`),
   saveEnvironment: (variables: EnvironmentUpdate[]) => request<{ variables: EnvironmentVariable[] }>("/api/environment", { method: "PUT", body: json({ variables }) }),

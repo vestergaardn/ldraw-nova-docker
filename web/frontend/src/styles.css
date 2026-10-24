@@ -49,6 +49,10 @@
 }
 
 * { box-sizing: border-box; }
+.assembly-guide { display: grid; gap: 7px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.assembly-guide-button { min-height: 44px; justify-content: center; font-weight: 600; white-space: normal; }
+.assembly-guide a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .assembly-guide .spinner { animation: none; } }
 html, body, #root { height: 100%; }
 body {
   margin: 0;

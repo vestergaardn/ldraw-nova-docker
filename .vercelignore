@@ -1,0 +1,13 @@
+.git
+.context
+data
+models-gallery
+vendor
+web/xr
+web/backend
+web/viewer
+web/frontend/node_modules
+web/frontend/dist
+**/__pycache__
+.env*
+!.env.example

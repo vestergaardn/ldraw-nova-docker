@@ -15,3 +15,8 @@ web/xr/node_modules
 web/xr/dist
 **/__pycache__
 **/.pytest_cache
+.context
+.vercel
+.venv
+**/.env
+**/.env.*

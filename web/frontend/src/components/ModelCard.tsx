@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { downloadGlb, downloadUrl, partsLabel, timeAgo, XR_TITLE, xrUrl, type ModelFile, type ViewerMode } from "../api";
 import { useApp } from "../context";
 import InfoModal from "./InfoModal";
+import AssemblyGuideButton from "./AssemblyGuideButton";
 
 type Props = {
   model: ModelFile & { warnings?: string[]; created_at?: number };
@@ -163,6 +164,7 @@ export default function ModelCard({ model, showChats = false, onDelete }: Props)
             ) : null}
           </span>
         </div>
+        {model.model_url && <AssemblyGuideButton key={model.model_url + model.mtime} modelUrl={model.model_url} />}
       </div>
       {info && model.info_url && (
         <InfoModal title={model.description || model.file} url={model.info_url} onClose={() => setInfo(false)} />
