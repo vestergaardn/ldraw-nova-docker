@@ -25,7 +25,7 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
   const upload = useRef<HTMLInputElement>(null);
   const documentUpload = useRef<HTMLInputElement>(null);
   const [selection, setSelection] = useState<{ modelId: string | null; options: TurnOptions }>({ modelId: llmId,
-    options: { ...initialOptions, mode: initialOptions && initialOptions.mode !== "agent" ? "plan" : "agent", permissions: initialOptions?.permissions ?? "ask" } });
+    options: { ...initialOptions, mode: initialOptions && initialOptions.mode !== "agent" ? "plan" : "agent", permissions: initialOptions?.permissions ?? "full" } });
   const [images, setImages] = useState<{ name: string; url: string; size: number }[]>([]);
   const [documents, setDocuments] = useState<(DocumentUpload & { size: number })[]>([]);
   const [error, setError] = useState("");

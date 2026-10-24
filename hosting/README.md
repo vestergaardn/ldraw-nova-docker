@@ -27,6 +27,9 @@ Completed PDFs are cached by the model contents and generator version.
 - Vercel limits request uploads to 4.5 MB. Local Docker supports larger uploads.
 
 The existing app assumes a trusted single user. It is not a multi-tenant service.
+New chats default to **Full access**, as requested by the owner. This allows agent
+tools to run without approval clicks. Existing chats keep their selected mode.
+Choose **Ask first** or **Read only** in the composer when needed.
 Password Protection restricts visitors to people with the owner's password.
 Vercel project administrators retain administrative access to the deployment.
 
