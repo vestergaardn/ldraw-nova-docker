@@ -1,6 +1,6 @@
 """Single-user model builder; Vercel serves the UI and authenticates visitors.
 
-Deploy using: uvx --python 3.12 --with modal modal deploy hosting/modal_app.py
+Deploy using: uvx --python 3.12 --with modal modal deploy --strategy recreate hosting/modal_app.py
 The generated Dockerfile.cloud pins the toolkit revision. Never include /data
 or /config in the image. They live in independent persistent Modal volumes.
 """
@@ -55,16 +55,27 @@ def server():
             return JSONResponse({'detail': 'Unauthorized'}, status_code=401)
         return await call_next(request)
 
+    checkpoint_lock = asyncio.Lock()
+
+    async def persist():
+        async with checkpoint_lock:
+            await asyncio.gather(data.commit.aio(), config.commit.aio())
+
     async def checkpoint():
         while True:
             await asyncio.sleep(20)
             try:
-                await asyncio.gather(data.commit.aio(), config.commit.aio())
+                await persist()
             except Exception:
                 logging.exception('Could not save the latest model data')
 
     @asynccontextmanager
     async def lifespan(instance):
+        # This file-backed app has one writer. Recreate deployments stop the old
+        # writer before the replacement reads its final saved transcript/run state.
+        await asyncio.gather(data.reload.aio(), config.reload.aio())
+        import agent
+        agent.checkpoint = persist
         display = subprocess.Popen(['Xvfb', ':99', '-screen', '0', '1920x1080x24'],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
@@ -84,7 +95,7 @@ def server():
             saver.cancel()
             with suppress(asyncio.CancelledError):
                 await saver
-            await asyncio.gather(data.commit.aio(), config.commit.aio())
+            await persist()
             display.terminate()
 
     web.router.lifespan_context = lifespan

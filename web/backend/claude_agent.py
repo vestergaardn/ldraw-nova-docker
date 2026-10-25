@@ -21,7 +21,7 @@ from tools import ToolContext
 
 
 async def run_claude(store, run, entry, save, execute, prompt, use_tools):
-    from agent import MAX_STEPS, available_tools, llm_history, mode_prompt
+    from agent import MAX_STEPS, available_tools, checkpoint, llm_history, mode_prompt
 
     ctx = ToolContext(chat_id=run.chat_id, store=store, emit=run.emit)
     sdk_tools = []
@@ -33,6 +33,7 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
             arguments = json.dumps(args)
             save({"role": "assistant", "content": None,
                   "tool_calls": [{"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}]})
+            await checkpoint()
             info = {"id": call_id, "name": name, "arguments": arguments}
             run.tools_running[call_id] = info
             run.emit("tool_start", info)
@@ -41,6 +42,7 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
                 refs = [store.ref(run.chat_id, path) for path in result.images]
                 save({"role": "tool", "tool_call_id": call_id, "name": name, "content": result.content,
                       "_models": [m["id"] for m in result.models], "_images": refs})
+                await checkpoint()
                 content = [{"type": "text", "text": result.content}]
                 if llm_config.capabilities(entry)["vision"] is True:
                     content += [{"type": "image", "mimeType": "image/png", "data": base64.b64encode(p.read_bytes()).decode()}
@@ -91,7 +93,7 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
         strict_mcp_config=True,
         mcp_servers={"ldraw": create_sdk_mcp_server(name="ldraw", tools=sdk_tools)} if sdk_tools else {},
         allowed_tools=[f"mcp__ldraw__{t.name}" for t in sdk_tools],
-        permission_mode="dontAsk", max_turns=MAX_STEPS, effort=run.options.get("effort"),
+        permission_mode="dontAsk", max_turns=max(1, MAX_STEPS - run.steps), effort=run.options.get("effort"),
         include_partial_messages=True, max_buffer_size=32 * 1024 * 1024,
     )
     async with ClaudeSDKClient(options=options) as client:
@@ -103,11 +105,14 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
                     run.draft += delta["text"]
                     run.emit("text", {"delta": delta["text"]})
             elif isinstance(event, AssistantMessage):
+                run.steps += 1
+                run.record("running")
                 text = "\n".join(b.text for b in event.content if isinstance(b, TextBlock))
                 if text:
                     if not run.draft:
                         run.emit("text", {"delta": text})
                     save({"role": "assistant", "content": text, "_llm_model": model})
                     run.draft = ""
+                await checkpoint()
             elif isinstance(event, ResultMessage) and event.is_error:
                 raise RuntimeError("Claude runtime could not complete the turn")

@@ -26,6 +26,14 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def isolated_agent_runtime(monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "_runs", {})
+    monkeypatch.setattr(agent, "_shutting_down", False)
+    monkeypatch.setattr(agent, "checkpoint", agent._local_checkpoint)
+
+
+@pytest.fixture(autouse=True)
 def offline_model_details(monkeypatch):
     """Unit tests never depend on live catalogues or send provider credentials."""
     import model_discovery

@@ -11,10 +11,11 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import AsyncIterator, Callable, Optional
+from typing import AsyncIterator, Awaitable, Callable, Optional
 
 import litellm
 
@@ -36,6 +37,15 @@ litellm.suppress_debug_info = True
 MAX_STEPS = 150
 KEEP_IMAGE_MESSAGES = 2               # only the newest renders are re-sent to vision models
 WORK_LISTING_LIMIT = 60               # files of the work folder listed in the system prompt
+MAX_RECOVERIES = 3                   # stop a repeatedly crashing turn, rather than retry forever
+
+
+async def _local_checkpoint() -> None:
+    """Local files are durable; Modal installs a volume commit callback."""
+
+
+checkpoint: Callable[[], Awaitable[None]] = _local_checkpoint
+_shutting_down = False
 
 
 @dataclass
@@ -50,6 +60,21 @@ class Run:
     started_at: float = field(default_factory=time.time)
     last_event_at: float = field(default_factory=time.time)
     phase: str = "Preparing the build workspace"
+    store: Optional[ChatStore] = None
+    turn_id: str = field(default_factory=lambda: secrets.token_hex(16))
+    entry_id: Optional[str] = None
+    steps: int = 0
+    recoveries: int = 0
+    stop_reason: Optional[str] = None
+    starting: bool = False
+
+    def record(self, status: str) -> None:
+        if self.store is not None:
+            self.store.save_run(self.chat_id, {
+                "turn_id": self.turn_id, "status": status, "llm_model_id": self.entry_id,
+                "options": self.options, "started_at": self.started_at,
+                "steps": self.steps, "recoveries": self.recoveries,
+            })
 
     def emit(self, event: str, data: dict) -> None:
         self.last_event_at = time.time()
@@ -91,7 +116,8 @@ _runs: dict[str, Run] = {}
 
 def is_running(chat_id: str) -> bool:
     run = _runs.get(chat_id)
-    return bool(run and run.task and not run.task.done())
+    return bool(run and (run.starting or (run.task and not run.task.done())
+                         or (_shutting_down and run.stop_reason == "restart")))
 
 
 def work_listing(work_dir: Path) -> str:
@@ -123,6 +149,14 @@ def system_prompt(store: ChatStore, chat_id: str) -> str:
     if notes.is_file() and not notes.is_symlink():
         with notes.open(errors="replace") as handle:
             prompt += "\n\nCurrent hand-over notes (workspace data):\n" + handle.read(16000)
+    run = _runs.get(chat_id)
+    if run and run.recoveries:
+        prompt += ("\n\nThe server restarted during this request. Continue the original request from the saved history and files. "
+                   "Inspect existing outputs before repeating an interrupted command. Do not replay completed tools. "
+                   "Previously granted one-time tool approvals do not carry over. All publication and stock checks still apply.")
+        published = [m for m in store.models(chat_id) if m["created_at"] >= run.started_at]
+        if published:
+            prompt += "\nModels already published during this request (do not publish duplicates):\n" + json.dumps(published)
     return prompt
 
 
@@ -201,6 +235,8 @@ def llm_history(messages: list[dict], vision: bool, resolve: Callable[[str], Pat
 
 async def start_turn(store: ChatStore, chat_id: str, text: str, llm_model_id: Optional[str],
                      options: dict | None = None, images: list[str] | None = None, documents: list | None = None) -> None:
+    if _shutting_down:
+        raise RuntimeError("The server is restarting. Try again shortly.")
     if is_running(chat_id):
         raise RuntimeError("this chat is already running a turn")
     entry = llm_config.get(llm_model_id) if llm_model_id else None
@@ -221,6 +257,8 @@ async def start_turn(store: ChatStore, chat_id: str, text: str, llm_model_id: Op
         if not await browser_auth.connected(provider):
             raise ValueError("Sign in to the provider in Settings first")
     # A concurrent request may have started while browser auth status was checked.
+    if _shutting_down:
+        raise RuntimeError("The server is restarting. Try again shortly.")
     if is_running(chat_id):
         raise RuntimeError("this chat is already running a turn")
 
@@ -235,29 +273,106 @@ async def start_turn(store: ChatStore, chat_id: str, text: str, llm_model_id: Op
     attached = save_documents(store, chat_id, documents or [])
     store.add_message(chat_id, {"role": "user", "content": content, **({"_documents": attached} if attached else {})})
 
-    run = _runs.get(chat_id) or Run(chat_id)
+    run = Run(chat_id, store=store, entry_id=entry["id"])
     _runs[chat_id] = run
     run.draft, run.tools_running = "", {}
     run.options, run.approvals = options, {}
     run.started_at = run.last_event_at = time.time()
     run.phase = "Preparing the build workspace"
-    run.task = asyncio.create_task(_run_turn(store, run, entry))
+    await _launch(run, entry)
 
 
-async def cancel(chat_id: str) -> bool:
-    run = _runs.get(chat_id)
-    if not run or not run.task or run.task.done():
-        return False
-    run.task.cancel()
+async def _launch(run: Run, entry: dict) -> None:
+    run.starting = True
     try:
-        await run.task
-    except asyncio.CancelledError:
-        pass
+        run.record("running")
+        # Persist the original request and recovery marker before accepting work.
+        await checkpoint()
+        if run.stop_reason is None:
+            run.task = asyncio.create_task(_run_turn(run.store, run, entry))
+    except Exception:
+        try:
+            run.record("error")
+        except OSError:
+            log.warning("could not save recovery status for chat %s", run.chat_id)
+        raise RuntimeError("The build could not be saved. Try again shortly.") from None
+    finally:
+        run.starting = False
+
+
+async def recover(store: ChatStore) -> None:
+    """Resume only explicitly recorded interrupted turns on this singleton worker."""
+    global _shutting_down
+    _shutting_down = False
+    for chat in store.list_chats():
+        chat_id = chat["id"]
+        state = store.run_state(chat_id)
+        if not state or state.get("status") not in {"running", "interrupted"} or is_running(chat_id):
+            continue
+        try:
+            # Never silently switch the original request to another model/account.
+            entry = llm_config.get(state["llm_model_id"])
+            if entry is None:
+                raise ValueError("The original AI model is no longer configured. Choose a model and send a message to continue.")
+            options = model_catalog.validate_options(entry, state["options"])
+            run = Run(chat_id, store=store, turn_id=state["turn_id"], entry_id=entry["id"], options=options,
+                      started_at=state["started_at"], steps=state.get("steps", 0),
+                      recoveries=state.get("recoveries", 0) + 1)
+            messages = [m for m in store.messages(chat_id) if m.get("_turn_id") == run.turn_id
+                        and not m.get("_ui_only") and not m.get("_partial")]
+            if messages and messages[-1].get("_final_answer"):
+                # The final answer reached disk just before the process died.
+                run.record("completed")
+                await prepare_guide(store, chat_id, run.started_at)
+                continue
+            if run.recoveries > MAX_RECOVERIES:
+                raise ValueError("The build paused after repeated server interruptions. Send a message to continue from the saved work.")
+            if run.steps >= MAX_STEPS:
+                raise ValueError(f"Stopped after {MAX_STEPS} steps. Send a message to continue.")
+            _runs[chat_id] = run
+            store.add_message(chat_id, {"role": "assistant", "_ui_only": True, "_notice": True,
+                                       "content": "The server restarted. Resuming your saved build."})
+            log.info("resuming chat %s turn %s after restart (%s/%s)", chat_id, run.turn_id, run.recoveries, MAX_RECOVERIES)
+            await _launch(run, entry)
+        except Exception as exc:
+            store.save_run(chat_id, {**state, "status": "error"})
+            message = str(exc) if isinstance(exc, ValueError) else "Recovery could not start. Your draft is saved. Send a message to continue."
+            store.add_message(chat_id, {"role": "assistant", "_ui_only": True, "_error": True, "content": message})
+            log.warning("could not recover chat %s: %s", chat_id, type(exc).__name__)
+
+
+async def shutdown() -> None:
+    global _shutting_down
+    _shutting_down = True
+    # Stop tools before closing the services they use. A restart is not a user Stop.
+    await asyncio.gather(*(cancel(chat_id, reason="restart") for chat_id in list(_runs)))
+    await checkpoint()
+
+
+async def cancel(chat_id: str, *, reason: str = "user") -> bool:
+    run = _runs.get(chat_id)
+    if not run or not is_running(chat_id):
+        return False
+    # An explicit Stop always wins over a simultaneous server restart.
+    if run.stop_reason != "user":
+        run.stop_reason = reason
+    run.record("stopped" if run.stop_reason == "user" else "interrupted")
+    if run.task:
+        run.task.cancel()
+        try:
+            await run.task
+        except asyncio.CancelledError:
+            pass
+    await checkpoint()
     return True
 
 
 async def subscribe(chat_id: str) -> AsyncIterator[tuple[str, dict]]:
     run = _runs.get(chat_id)
+    if run and _shutting_down and run.stop_reason == "restart":
+        yield "snapshot", {"running": True, "draft": "", "tools": [], "approvals": [],
+                           "activity": {**run.activity(), "phase": "The server is restarting. Your saved build will resume."}}
+        return  # EventSource reconnects to the replacement server after EOF.
     if run is None or not is_running(chat_id):
         yield "snapshot", {"running": False, "draft": "", "tools": []}
         return
@@ -297,18 +412,22 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
     ctx = ToolContext(chat_id=chat_id, store=store, emit=run.emit)
 
     def save(message: dict) -> int:
-        msg_id = store.add_message(chat_id, message)
+        msg_id = store.add_message(chat_id, {**message, "_turn_id": run.turn_id})
         run.emit("saved", {"message_id": msg_id})
         return msg_id
 
     stopped = False
+    status = "completed"
     try:
         if entry.get("auth_mode") == "browser" and entry["litellm_params"]["model"].startswith("anthropic/"):
             from claude_agent import run_claude
             await run_claude(store, run, entry, save, execute_tool, system_prompt(store, chat_id), use_tools)
             return
         params = await inference.params_for(entry, run.options)
-        for _step in range(MAX_STEPS):
+        for _step in range(run.steps, MAX_STEPS):
+            run.steps = _step + 1
+            run.record("running")
+            await checkpoint()
             prompt = system_prompt(store, chat_id) + mode_prompt(run.options)
             messages = [{"role": "system", "content": prompt},
                         *llm_history(store.messages(chat_id), vision, lambda ref: store.resolve(chat_id, ref), entry["litellm_params"]["model"], mark_turns=True)]
@@ -342,6 +461,8 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
             message["_llm_model"] = entry["litellm_params"]["model"]
             if tool_calls:
                 message["tool_calls"] = tool_calls
+            else:
+                message["_final_answer"] = True
             if getattr(reply, "thinking_blocks", None):          # must round-trip for Anthropic thinking
                 message["thinking_blocks"] = reply.thinking_blocks
             if getattr(reply, "provider_specific_fields", None):
@@ -361,7 +482,10 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
             save(message)
             run.draft = ""
             if not tool_calls:
+                run.record("completed")
                 break
+
+            await checkpoint()
 
             images: list[str] = []                             # relative to the chat folder
             for call in tool_calls:
@@ -374,26 +498,32 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
                 refs = [store.ref(chat_id, png) for png in result.images]
                 save({"role": "tool", "tool_call_id": call["id"], "name": name, "content": result.content,
                       "_models": [m["id"] for m in result.models], "_images": refs})
+                await checkpoint()
                 run.emit("tool_end", {"id": call["id"], "name": name})
                 images += refs
             if images and vision:
                 save({"role": "user", "content": "Renders produced by the tool calls above:",
                       "_images_for_llm": images, "_hidden": True})
         else:
+            status = "limited"
             save({"role": "assistant", "_ui_only": True, "_notice": True,
                   "content": f"Stopped after {MAX_STEPS} steps. Send a message to continue."})
     except asyncio.CancelledError:
         stopped = True
+        status = "stopped" if run.stop_reason == "user" else "interrupted"
         if run.draft:
-            save({"role": "assistant", "content": run.draft})
-        save({"role": "assistant", "_ui_only": True, "_notice": True, "content": "Stopped."})
+            save({"role": "assistant", "content": run.draft, "_partial": True})
+        save({"role": "assistant", "_ui_only": True, "_notice": True,
+              "content": "Stopped." if status == "stopped" else "The server is restarting. Your saved build will resume automatically."})
         raise
     except Exception as exc:  # noqa: BLE001 - provider/auth/network errors end the turn, not the chat
+        status = "error"
         log.warning("turn failed for chat %s: %s", chat_id, exc.__class__.__name__)
         message = str(exc) if isinstance(exc, ValueError) else f"{exc.__class__.__name__}: Provider request failed. Check login, model access and settings."
         save({"role": "assistant", "_ui_only": True, "_error": True, "content": message})
         run.emit("turn_error", {"message": message})   # not "error": EventSource reserves it
     finally:
+        run.record(status)
         run.draft, run.tools_running = "", {}
         for _, future in run.approvals.values():
             if not future.done():
@@ -402,7 +532,8 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         # Queue the guide before "done" so the reloaded card already shows it.
         if not stopped:
             await prepare_guide(store, chat_id, run.started_at)
-        run.emit("done", {})
+        await checkpoint()
+        run.emit("reconnect" if status == "interrupted" else "done", {})
 
 
 READ_TOOLS = {"list_files", "read_file", "view_image", "report_progress", "search_available_parts", "check_build_parts"}

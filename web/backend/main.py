@@ -57,14 +57,16 @@ async def lifespan(_app: FastAPI):
     for folder in (settings.GENERATED_DIR, settings.CHATS_DIR, settings.OUTPUT_DIR):
         folder.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(publications.initialize)
-    get_store()
+    store = get_store()
     pricing.initialize()
-    yield
-    await pricing.shutdown()
-    await booklets.shutdown()
-    await browser_auth.shutdown()
-    for chat_id in list(agent._runs):
-        await agent.cancel(chat_id)
+    await agent.recover(store)
+    try:
+        yield
+    finally:
+        await agent.shutdown()
+        await pricing.shutdown()
+        await booklets.shutdown()
+        await browser_auth.shutdown()
 
 
 app = FastAPI(title="LDraw Nova agent chat", lifespan=lifespan)
@@ -815,6 +817,8 @@ def files(path: str, download: bool = False):
     if file is None or file_url(file) is None:
         _not_found()
     if settings.CHATS_DIR.resolve() in file.parents:
+        if file.name in {"run.json", "run.tmp"}:
+            _not_found()
         if file.stat().st_size > 32 * 1024 * 1024 or not publications.artifact_allowed(file.name, file.read_bytes()):
             _not_found()
     return _serve(settings.DATA_DIR, path, download=download)

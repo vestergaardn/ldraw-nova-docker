@@ -111,6 +111,26 @@ class ChatStore:
         tmp.write_text(json.dumps(chat, indent=2))
         os.replace(tmp, path)
 
+    # Server-owned recovery metadata lives beside the transcript, outside the
+    # agent's writable work folder. Older chats deliberately have no record.
+    def run_state(self, chat_id: str) -> Optional[dict]:
+        try:
+            state = json.loads((self.chat_dir(chat_id) / "run.json").read_text())
+            return state if isinstance(state, dict) and state.get("version") == 1 else None
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    def save_run(self, chat_id: str, state: dict) -> None:
+        with self._lock:
+            path = self.chat_dir(chat_id) / "run.json"
+            tmp = path.with_suffix(".tmp")
+            with tmp.open("w", encoding="utf-8") as handle:
+                os.chmod(tmp, 0o600)
+                json.dump({**state, "version": 1, "updated_at": time.time()}, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+
     # --- messages ----------------------------------------------------------
 
     def add_message(self, chat_id: str, message: dict) -> int:

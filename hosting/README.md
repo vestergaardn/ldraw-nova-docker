@@ -23,7 +23,11 @@ CSV exports. The independent full-model parts check remains mandatory.
 - A single worker avoids concurrent writers to the upstream filesystem store.
   It starts on demand and can shut down one hour after its last request.
   Active browser streams keep requests open. Jobs without an open browser can
-  be interrupted after one hour; PDF jobs show a retry message after restart.
+  be interrupted after one hour. Unfinished model turns now resume from saved
+  history and files when the worker starts again. Explicit Stop requests,
+  provider failures, completed turns and exhausted step limits do not restart.
+  Three automatic recoveries per turn prevent an endless crash loop.
+  PDF jobs show a retry message after restart.
 - The private worker requires `LEGO_WORKER_KEY` on every request, including
   model downloads and viewer assets. Vercel stores this as a sensitive variable.
   It must match Modal secret `lego-nova-gateway`. Never expose it through Vite.
@@ -62,9 +66,22 @@ Dockerfile with its immutable 40-character commit SHA:
 
 ```sh
 python3 hosting/make_dockerfile.py TOOLKIT_COMMIT_SHA
-uvx --python 3.12 modal deploy hosting/modal_app.py
+uvx --python 3.12 --with modal modal deploy --strategy recreate hosting/modal_app.py
 vercel --prod --scope vestergaard
 ```
+
+Keep `max_containers=1` and use `--strategy recreate`: the file store needs one
+writer, including during deployment. Recreate briefly queues requests while
+replacing the worker. The old worker records interruptions and commits its
+volume; the replacement reloads that volume before recovering active turns.
+Do not scale this filesystem store to multiple workers without distributed
+ownership and transcript storage. Modal volumes do not provide distributed
+file locks: https://modal.com/docs/guide/volumes.
+
+Recovery preserves the original AI model, options, step budget, tool permissions
+and publication checks. It does not replay saved commands. Pending commands are
+reported as interrupted so the AI can inspect existing files before continuing.
+Old chats without a recovery record require an explicit continuation message.
 
 `Dockerfile.cloud` is generated from the upstream `Dockerfile`. The additional
 source stage fetches only the pinned public toolkit revision. Runtime user
