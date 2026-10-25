@@ -35,6 +35,7 @@ Database publication ages measured from the oldest required observation were 15.
 - The Vercel MPD download matched the approved model hash. The approved GLB download was valid and contained 405,804 bytes. The generated collection ZIP contained only approved model files and their permitted sidecars.
 - Both generated models present before this release retained their exact hashes. All five gallery examples remained accessible.
 - Chrome displayed `All parts available`, 22/22 coverage, exact element IDs, individual order limits, USD prices, and conditional fees. The automatic car assembly PDF remained available (seven pages).
+- The car's oldest observation subsequently expired in the live test. Chrome and the API changed its status to `Needs a stock check`; its approved model download remained accessible with the same SHA-256.
 - There were zero cart intents for the three test revisions. The total cart-intent count stayed at four throughout these tests. No LEGO cart additions or checkout operations occurred.
 
 ## Automated checks
