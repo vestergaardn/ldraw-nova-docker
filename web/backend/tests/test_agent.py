@@ -131,3 +131,18 @@ def test_provider_error_ends_turn_but_not_chat(monkeypatch, entry, store: ChatSt
     last = store.messages(chat["id"])[-1]
     assert last["_error"] and "Provider request failed" in last["content"]
     assert not agent.is_running(chat["id"])
+
+
+def test_step_budget_keeps_draft_without_a_completed_model(monkeypatch, entry, store: ChatStore):
+    fake, _ = scripted([[*tool_call_chunks('draft', 'write_file', {'path': 'output/limited.mpd', 'content': CAR})]])
+    monkeypatch.setattr(agent.litellm, 'acompletion', fake)
+    monkeypatch.setattr(agent, 'MAX_STEPS', 1)
+    chat = store.create_chat()
+    async def run():
+        await agent.start_turn(store, chat['id'], 'Build a car', entry['id'], {'permissions': 'full'})
+        await agent._runs[chat['id']].task
+    asyncio.run(run())
+    assert (store.work_dir(chat['id']) / 'limited.mpd').read_text() == CAR
+    assert store.models(chat['id']) == []
+    assert 'Stopped after 1 steps' in store.messages(chat['id'])[-1]['content']
+    assert not agent.is_running(chat['id'])

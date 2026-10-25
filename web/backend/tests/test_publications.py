@@ -128,6 +128,21 @@ def test_post_render_failures_publish_nothing_and_keep_draft(setup,render_stub,f
     assert (ctx.work_dir/'stock-check.json').is_file()
 
 
+@pytest.mark.parametrize('stage', ['validate', 'render'])
+def test_review_runtime_exhaustion_keeps_a_resumable_draft(setup,render_stub,monkeypatch,stage):
+    ctx,db,source,events = setup
+    async def timeout(ctx,args,limit):
+        if args[0] == stage:
+            return sandbox.RunResult(-9,'','Runtime limit reached',True,limit)
+        return await render_stub(ctx,args,limit)
+    monkeypatch.setattr(tools,'_trusted_review',timeout)
+    assert not publish(ctx).models
+    assert source.read_bytes() == SOURCE and not list(settings.GENERATED_DIR.iterdir())
+    assert not db.records and not any(event == 'model' for event,_ in events)
+    monkeypatch.setattr(tools,'_trusted_review',render_stub)
+    assert publish(ctx).models
+
+
 def test_snapshot_stays_identical_during_edits_and_cache_resumes(setup,render_stub,monkeypatch):
     ctx,db,source,_ = setup
     calls=[]
