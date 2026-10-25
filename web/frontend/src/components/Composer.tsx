@@ -147,10 +147,8 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
           {profile.context_budgets.map(n => <option value={n} key={n}>{tokenLabel(n)}</option>)}
         </select>}
       </div>
-      <span className="generation-cost-warning" role="note">⚠ Building models may incur charges.</span>
       {running ? <button type="button" className="danger send-button" onClick={onStop}>Stop</button> :
         <button type="submit" className="primary send-button" disabled={!text.trim() || busy || !model}>Send <span aria-hidden>↑</span></button>}
     </div>
-    <div className="composer-hint muted">Enter to send · Shift+Enter for a new line</div>
   </form>;
 }
