@@ -22,6 +22,7 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
   const pending = useRef<string | null>(null);
   const saved = useRef<Promise<Awaited<ReturnType<typeof api.latestQuote>> | null> | null>(null);
   const shown = useRef<string | null>(null);
+  const opened = useRef(false);
   useEffect(() => setSummary(initial), [initial]);
   useEffect(() => { saved.current = null; }, [modelUrl]);
   useEffect(() => {
@@ -50,8 +51,9 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
     return () => window.removeEventListener('message', receive);
   }, []);
   useEffect(() => {
-    if (open) dialog.current?.showModal();
-    else { dialog.current?.close(); opener.current?.focus(); }
+    // Return focus only after a close. Focus on mount moved the page focus and prefetched every card.
+    if (open) { dialog.current?.showModal(); opened.current = true; }
+    else if (opened.current) { dialog.current?.close(); opener.current?.focus(); }
   }, [open]);
 
   function show(next: ModelQuote) {
