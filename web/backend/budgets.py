@@ -30,7 +30,7 @@ class BudgetAssessment(TypedDict):
 def normalize(value=None, *, default='skipped') -> BuildBudget:
     if value is None:
         value = {'status': default}
-    if not isinstance(value, dict) or value.get('status') not in {'pending', 'skipped', 'set'}:
+    if not isinstance(value, dict) or value.get('status') not in ('pending', 'skipped', 'set'):
         raise ValueError('Choose a parts budget or skip it.')
     status, amount = value['status'], value.get('amount_cents')
     if status == 'set':

@@ -35,6 +35,11 @@ def test_invalid_amounts_are_rejected(amount):
     with pytest.raises(ValueError): choice(amount)
 
 
+@pytest.mark.parametrize('status', [[], {}, None, 'unknown', 1])
+def test_invalid_states_are_rejected(status):
+    with pytest.raises(ValueError): budgets.normalize({'status':status})
+
+
 @pytest.mark.parametrize('amount,maximum', [(1,1), (19,19), (20,21), (9999,10498), (10000,10500)])
 def test_integer_cent_limits(amount, maximum):
     assert choice(amount)['maximum_cents'] == maximum
@@ -72,6 +77,7 @@ def test_budget_api_updates_skip_legacy_and_active_conflicts(recovery_app, monke
     run.starting=False
     assert client.patch(f'/api/chats/{chat_id}',json={'budget':{'status':'set','amount_cents':1.25}}).status_code==400
     assert client.post('/api/chats',json={'budget':{'status':'set','amount_cents':False}}).status_code==400
+    assert client.post('/api/chats',json={'budget':{'status':[]}}).status_code==400
     legacy=store.get_chat(chat_id);legacy.pop('budget');store._write_chat(legacy)
     assert store.get_chat(chat_id)['budget']['status']=='skipped'
 
