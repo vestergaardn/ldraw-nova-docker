@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import type { TurnOptions, DocumentUpload } from "../api";
@@ -70,6 +70,13 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
   }
+  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(e.clipboardData.files).filter(file => file.type.startsWith("image/"));
+    if (!files.length) return;
+    // A copied image can also contain its URL or HTML; attach only the image.
+    e.preventDefault();
+    if (!disabled && model) void attach(files);
+  }
   async function attach(files: File[], kind: "image" | "document" = "image") {
     if (!files.length) return;
     setError("");
@@ -118,7 +125,7 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
         const files = Array.from(e.target.files ?? []); e.target.value = ""; void attach(files);
       }} />
       <textarea ref={ref} rows={2} value={text} autoFocus={autoFocus} aria-label="Message" placeholder="Describe a model to build…"
-        onChange={e => setText(e.target.value)} onKeyDown={onKeyDown} />
+        onChange={e => setText(e.target.value)} onKeyDown={onKeyDown} onPaste={onPaste} />
     </div>
     {!!images.length && <div className="attachments">{images.map((img, index) => <div key={index}>
       <img src={img.url} alt={img.name} /><button type="button" aria-label={`Remove ${img.name}`} disabled={disabled} onClick={() => setImages(images.filter((_, i) => i !== index))}>✕</button>
