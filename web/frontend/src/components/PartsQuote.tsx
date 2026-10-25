@@ -20,7 +20,10 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const pending = useRef<string | null>(null);
+  const saved = useRef<Promise<Awaited<ReturnType<typeof api.latestQuote>> | null> | null>(null);
+  const shown = useRef<string | null>(null);
   useEffect(() => setSummary(initial), [initial]);
+  useEffect(() => { saved.current = null; }, [modelUrl]);
   useEffect(() => {
     setNow(Date.now() / 1000);
     if (!quote) return;
@@ -51,15 +54,30 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
     else { dialog.current?.close(); opener.current?.focus(); }
   }, [open]);
 
+  function show(next: ModelQuote) {
+    // A different review needs a new choice; the same review keeps it.
+    if (next.review_hash !== shown.current) setAvailableOnly(false);
+    shown.current = next.review_hash; setQuote(next); setSummary(next);
+  }
   async function refresh() {
-    setBusy(true); setError(''); setAvailableOnly(false); setCartStatus(''); setCartItems([]); pending.current=null;
-    try {
-      const next = await api.createQuote(modelUrl, true);
-      setQuote(next); setSummary(next);
-    } catch (e) { setError((e as Error).message); }
+    setBusy(true); setError(''); setCartStatus(''); setCartItems([]); pending.current=null;
+    try { show(await api.createQuote(modelUrl, true)); }
+    catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  async function review() { setOpen(true); await refresh(); }
+  function prefetch() {
+    saved.current ??= api.latestQuote(modelUrl).catch(() => null);
+    return saved.current;
+  }
+  async function review() {
+    setOpen(true); setError('');
+    const request = prefetch(); saved.current = null;
+    const cached = await request;
+    const latest = cached && 'id' in cached ? cached : null;
+    if (latest) show(latest);
+    // Live LEGO checks only when the saved prices are too old to add to the bag.
+    if (!latest || latest.stale || Date.now() / 1000 - latest.created_at >= 600) await refresh();
+  }
   async function add(event: React.MouseEvent) {
     // Automatic model publication and synthetic DOM clicks cannot create a cart request.
     if (!event.isTrusted || !quote || busy || !helper) return;
@@ -83,7 +101,7 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
       {priced && <span className="muted small">{priced.refreshing ? 'Updating prices…' : priced.stale ? 'Prices need an update' : priced.checked_at === null ? 'Prices need a match' : `Checked ${timeAgo(priced.checked_at ?? priced.created_at)}`}</span>}
       {priced && <span className="muted small">{priced.fees.length ? priced.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation'}</span>}
     </div>
-    <button ref={opener} type="button" onClick={review}>Review parts and cost</button>
+    <button ref={opener} type="button" onPointerEnter={prefetch} onFocus={prefetch} onClick={review}>Review parts and cost</button>
     {open && createPortal(<dialog ref={dialog} className="parts-dialog" aria-labelledby="parts-title" onCancel={() => setOpen(false)}>
       <header className="modal-head"><strong id="parts-title">Parts and cost</strong><button className="icon-button" aria-label="Close parts review" onClick={() => setOpen(false)}>×</button></header>
       <div className="parts-review">
@@ -92,7 +110,7 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
           <p className="muted small">Identity data: <a href="https://rebrickable.com/downloads/" target="_blank" rel="noreferrer">Rebrickable</a>. Prices and stock: LEGO US. Saved models and cart requests never change parts automatically.</p>
         </>}
         <div className="parts-actions">
-          <button onClick={refresh} disabled={busy}>{busy && !pending.current ? 'Checking prices…' : 'Refresh prices'}</button>
+          <button onClick={refresh} disabled={busy}>{busy && !pending.current ? (quote ? 'Updating prices…' : 'Checking prices…') : 'Refresh prices'}</button>
           <button onClick={add} disabled={busy || !ready || (!complete && !availableOnly) || !helper}>Add to LEGO bag</button>
           {quote && ready && (complete || availableOnly) && Array.from({ length: Math.ceil(importCount / 400) }, (_, batch) => <a key={batch} className="button" href={`/api/quotes/${quote.id}/import/${batch}?available_only=${availableOnly}`} download>Download LEGO import{importCount > 400 ? ` ${batch + 1}` : ''}</a>)}
         </div>

@@ -66,3 +66,27 @@ def test_summary_reports_price_observation_age_and_refresh_progress(tmp_path,mon
     assert summary['checked_at']==now-3600 and summary['refreshing'] is True
     running.clear()
     assert service.summary(model)['refreshing'] is False
+
+
+def test_latest_returns_the_saved_rows_without_pricing_work(tmp_path,monkeypatch):
+    import json,time
+    from purchasing import service
+    model=tmp_path/'revision.mpd';model.write_text('0 model')
+    monkeypatch.setattr(service.settings,'CONFIG_DIR',tmp_path/'config')
+    monkeypatch.setattr(service,'_tasks',{})
+    async def forbidden(*args,**kwargs):raise AssertionError('opening the review must not price the model')
+    monkeypatch.setattr(service,'quote_model',forbidden)
+    assert service.latest(model)=={'revision':service.revision_for(model),'status':'pending'}
+    revision=service.revision_for(model);now=time.time()
+    lines=[{'part':'3001','checked_at':now-60}]
+    cache=service._cache(revision);cache.parent.mkdir(parents=True,exist_ok=True)
+    cache.write_text(json.dumps({'id':'saved','revision':revision,'created_at':now,'stale':False,'lines':lines}))
+    latest=service.latest(model)
+    assert latest['lines']==lines and latest['checked_at']==now-60 and latest['stale'] is False
+    assert service.summary(model)=={k:v for k,v in latest.items() if k!='lines'}
+
+
+def test_latest_route_is_not_read_as_a_quote_id():
+    with TestClient(app) as client:
+        assert client.get('/api/quotes/latest',params={'url':'https://example.com/model.mpd'}).status_code==404
+        assert client.get('/api/quotes/latest',params={'url':'/files/generated/../../config/secret.mpd'}).status_code==404

@@ -651,6 +651,13 @@ def quote_summary(url: str):
     return JSONResponse({**(pricing.summary(model) or {}), 'build_availability': publications.availability(model)},headers={'Cache-Control':'no-store'})
 
 
+@app.get('/api/quotes/latest')
+def quote_latest(url: str):
+    # The saved quote opens the parts review at once; the dialog refreshes prices only when they are old.
+    model=model_from_url(url) or _not_found('Unknown model')
+    return JSONResponse({**(pricing.latest(model) or {}), 'build_availability': publications.availability(model)},headers={'Cache-Control':'no-store'})
+
+
 @app.get('/api/quotes/{quote_id}')
 def quote_detail(quote_id: str):
     try:

@@ -50,21 +50,29 @@ def _save(quote):
     temporary.chmod(0o600);temporary.replace(path)
 
 
-def summary(model):
+def latest(model):
+    """The saved quote for the model's current revision, read from one local file.
+
+    No lock, database or LEGO call, so the parts review can open at once."""
     if not model.is_file(): return None
     revision = revision_for(model)
     try:
-        quote = json.loads(_cache(revision).read_text())
-        result = {k: v for k, v in quote.items() if k != 'lines'}
-        observed=[line['checked_at'] for line in quote['lines'] if line.get('checked_at') is not None]
+        result = json.loads(_cache(revision).read_text())
+        observed=[line['checked_at'] for line in result['lines'] if line.get('checked_at') is not None]
         result['checked_at']=min(observed) if observed else None
         result['refreshing']=str(model.resolve()) in _tasks
-        result['stale'] = quote['stale'] or time.time() - quote['created_at'] > MAX_AGE
+        result['stale'] = result['stale'] or time.time() - result['created_at'] > MAX_AGE
         if result['stale']:schedule(model)
         return result
     except (FileNotFoundError, ValueError):
         schedule(model)
         return {'revision': revision, 'status': 'pending'}
+
+
+def summary(model):
+    result = latest(model)
+    if result is not None: result.pop('lines', None)
+    return result
 
 
 def schedule(model):

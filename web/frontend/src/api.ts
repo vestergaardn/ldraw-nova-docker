@@ -144,6 +144,8 @@ const json = (body: unknown) => JSON.stringify(body);
 
 export const api = {
   quoteSummary: (url: string) => request<QuoteSummary>(`/api/quotes/summary?url=${encodeURIComponent(url)}`),
+  // The saved quote with rows: one file read on the server, so the parts review opens at once.
+  latestQuote: (url: string) => request<ModelQuote | { revision: string; status: 'pending' }>(`/api/quotes/latest?url=${encodeURIComponent(url)}`),
   createQuote: (url: string, refresh = false) => request<ModelQuote>('/api/quotes', { method: 'POST', body: json({ url, refresh }) }),
   quote: (id: string) => request<ModelQuote>(`/api/quotes/${id}`),
   createCartIntent: (quote: ModelQuote, availableOnly: boolean) => request<CartIntent>('/api/cart-intents', {
