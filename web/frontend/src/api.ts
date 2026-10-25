@@ -1,9 +1,29 @@
 // Typed client for the FastAPI backend (web/backend/main.py).
 
 export type SnapshotStatus = "ready" | "queued" | "rendering" | "failed" | "missing";
+export type GuideOptions = { template: "creator-31134" | "city-clear"; improve: boolean; print_format: "native" | "letter" };
 export type AssemblyGuide = {
   id: string; status: "queued" | "rendering" | "ready" | "failed";
   download_url?: string; pages?: number; parts?: number; steps?: number; error?: string;
+};
+
+export type QuoteLine = {
+  part: string; color: string; name: string; quantity: number; element_id: string | null;
+  candidate_ids: string[]; state: 'available' | 'out_of_stock' | 'unlisted' | 'unmapped';
+  unit_price: number | null; line_total: number | null; checked_at: number | null;
+  max_quantity: number | null; stale: boolean; issue: string | null; evidence: string;
+  alternatives: { part: string; element_id: string; unit_price: number | null; relationship: string; requires_model_review: boolean }[];
+};
+export type ModelQuote = {
+  id: string; revision: string; currency: 'USD'; created_at: number; lines: QuoteLine[];
+  known_subtotal: number; subtotal: number | null; total_quantity: number; priced_quantity: number;
+  purchasable_quantity: number; coverage: number; unresolved_lines: number; stale: boolean;
+  fees: { name: string; amount: number }[]; fees_complete: boolean; review_hash: string;
+};
+export type QuoteSummary = Omit<ModelQuote, 'lines'> | { revision: string; status: 'pending' };
+export type CartIntent = {
+  id: string; token: string; items: { elementId: string; quantity: number; unitPrice: number }[];
+  revision: string; review_hash: string; expires_at: number;
 };
 
 /** A model file in data/generated, or in the bundled gallery. */
@@ -25,6 +45,7 @@ export type ModelFile = {
   bom_status: SnapshotStatus;
   bom_error: string | null;
   chats?: { id: string; title: string }[]; // chats that produced it (My Models page)
+  quote?: QuoteSummary | null;
 };
 
 /** A model a chat produced: a reference into data/generated. */
@@ -111,7 +132,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown) => JSON.stringify(body);
 
 export const api = {
-  createAssemblyGuide: (url: string) => request<AssemblyGuide>("/api/assembly-guides", { method: "POST", body: json({ url }) }),
+  quoteSummary: (url: string) => request<QuoteSummary>(`/api/quotes/summary?url=${encodeURIComponent(url)}`),
+  createQuote: (url: string, refresh = false) => request<ModelQuote>('/api/quotes', { method: 'POST', body: json({ url, refresh }) }),
+  quote: (id: string) => request<ModelQuote>(`/api/quotes/${id}`),
+  createCartIntent: (quote: ModelQuote, availableOnly: boolean) => request<CartIntent>('/api/cart-intents', {
+    method: 'POST', body: json({ quote_id: quote.id, review_hash: quote.review_hash, available_only: availableOnly }),
+  }),
+  createAssemblyGuide: (url: string, options: GuideOptions) => request<AssemblyGuide>("/api/assembly-guides", { method: "POST", body: json({ url, ...options }) }),
   assemblyGuide: (id: string) => request<AssemblyGuide>(`/api/assembly-guides/${id}`),
   environment: () => request<{ variables: EnvironmentVariable[] }>("/api/environment"),
   checkEnvironment: (name: string, id?: string) => request<{ preconfigured: boolean; saved: boolean }>(`/api/environment/check?name=${encodeURIComponent(name)}&exclude_id=${encodeURIComponent(id ?? "")}`),

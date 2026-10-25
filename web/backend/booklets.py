@@ -14,8 +14,8 @@ import sandbox
 import settings
 import toolkit
 
-VERSION = '1'
-TIMEOUT = 1800
+VERSION = '2:creator-31134-v1:plan-4:outfit-1'
+TIMEOUT = 3500
 MAX_PENDING = 4
 _tasks: dict[str, asyncio.Task] = {}
 _models: dict[str, Path] = {}
@@ -55,11 +55,15 @@ def is_busy(model):
     return model.resolve() in _models.values()
 
 
-async def start(model):
+async def start(model, *, template='creator-31134', improve=True, print_format='native'):
+    if template not in {'creator-31134','city-clear'} or print_format not in {'native','letter'} or not isinstance(improve,bool):
+        raise ValueError('Invalid guide options')
+    options=dict(template=template,improve=improve,print_format=print_format)
     content = await asyncio.to_thread(model.read_bytes)
     if len(content) > 5 * 1024 * 1024:
         raise ValueError('Choose a model smaller than 5 MB for an assembly guide')
-    key = hashlib.sha256(VERSION.encode() + str(model.resolve()).encode() + content).hexdigest()[:32]
+    render_key = hashlib.sha256(VERSION.encode() + str(model.resolve()).encode() + json.dumps(dict(template=template,improve=improve),sort_keys=True).encode() + content).hexdigest()[:32]
+    key = hashlib.sha256((render_key+print_format).encode()).hexdigest()[:32]
     folder = directory(key)
     if key in _tasks or (folder / 'booklet.pdf').is_file():
         return status(key)
@@ -72,7 +76,7 @@ async def start(model):
     source = folder / ('source' + model.suffix.lower())
     source.write_bytes(content)
     data = dict(id=key, status='queued', filename=model.stem + '-assembly-guide.pdf',
-                created_at=time.time(), error=None)
+                created_at=time.time(), error=None, options=options, render_key=render_key)
     _save(folder, data)
     _models[key] = model.resolve()
     task = asyncio.create_task(_generate(key, model, source, data))
@@ -91,15 +95,19 @@ async def _generate(key, model, source, data):
         async with render._rendering(model):
             data['status'] = 'rendering'
             _save(folder, data)
+            sandbox.give_to_agent(root())
             result = await sandbox.run(
                 [str(toolkit.root() / 'ldraw-agent'), 'manual', 'pdf', str(source),
-                 '--output', str(folder / 'booklet.pdf')],
+                 '--output', str(folder / 'booklet.pdf'), '--template', data['options']['template'],
+                 '--print-format', data['options']['print_format'],
+                 '--workdir', str(root() / 'render-cache' / data['render_key']),
+                 *([] if data['options']['improve'] else ['--no-improve'])],
                 cwd=folder, timeout=TIMEOUT, env_extra=toolkit.environment())
             if result.exit_code != 0 or not (folder / 'booklet.pdf').is_file():
                 details = result.stderr.strip() or result.stdout.strip()
                 log.warning('Assembly guide %s failed: %s', key, details[-2000:])
                 if result.timed_out:
-                    raise ValueError('This guide took too long. Try a smaller model.')
+                    raise ValueError('Rendering paused at the time limit. Retry to resume completed work.')
                 # CLI errors are JSON; expose its actionable message, not logs or paths.
                 try:
                     error = json.loads(result.stdout).get('error', '')
@@ -107,7 +115,9 @@ async def _generate(key, model, source, data):
                     error = ''
                 raise ValueError(error or 'Could not create this guide. Check the model has valid building steps.')
             report = json.loads(result.stdout)
-            data.update(status='ready', pages=report['pages'], parts=report['parts'], steps=report['steps'])
+            data.update(status='ready', pages=report['pages'], parts=report['parts'], steps=report['steps'],
+                        native_pages=report.get('native_pages'), fidelity=report.get('fidelity'),
+                        geometry_preserved=report.get('geometry_preserved'),font=report.get('font'))
             _save(folder, data)
     except asyncio.CancelledError:
         data.update(status='failed', error='Generation stopped. Please try again.')

@@ -199,6 +199,8 @@ async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) 
     else:
         warnings.append("Preview/BOM rendering failed; the model can still be opened in 3D.")
     ref = ctx.store.add_model(ctx.chat_id, name or source.stem, target, warnings)
+    from purchasing import service as pricing
+    pricing.schedule(target)
     ctx.emit("model", {"id": ref["id"], "name": ref["name"]})
     model_url = "/files/generated/" + quote(target.name)
     result = {"model_url": model_url, "source": artifact_url(ctx, source),

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type AssemblyGuide } from "../api";
+import { api, type AssemblyGuide, type GuideOptions } from "../api";
 
 export default function AssemblyGuideButton({ modelUrl }: { modelUrl: string }) {
   const [job, setJob] = useState<AssemblyGuide | null>(null);
+  const [options, setOptions] = useState<GuideOptions>({template:"creator-31134",improve:true,print_format:"native"});
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
@@ -26,7 +27,7 @@ export default function AssemblyGuideButton({ modelUrl }: { modelUrl: string }) 
   async function generate() {
     setStarting(true); setError("");
     try {
-      const result = await api.createAssemblyGuide(modelUrl);
+      const result = await api.createAssemblyGuide(modelUrl, options);
       if (mounted.current) setJob(result);
     } catch (e) {
       if (mounted.current) setError((e as Error).message);
@@ -37,6 +38,16 @@ export default function AssemblyGuideButton({ modelUrl }: { modelUrl: string }) 
 
   const failure = error || (job?.status === "failed" ? job.error : "");
   return <div className="assembly-guide">
+    <details className="guide-options"><summary>Guide options</summary>
+      <label>Page style<select value={options.template} disabled={busy} onChange={e => { setOptions({...options,template:e.target.value as GuideOptions['template']}); setJob(null); }}>
+        <option value="creator-31134">Creator blue</option><option value="city-clear">City clear</option>
+      </select></label>
+      <label>Print format<select value={options.print_format} disabled={busy} onChange={e => { setOptions({...options,print_format:e.target.value as GuideOptions['print_format']}); setJob(null); }}>
+        <option value="native">Native booklet pages</option><option value="letter">US Letter · folded booklet</option>
+      </select></label>
+      <label className="guide-improve"><input type="checkbox" checked={options.improve} disabled={busy} onChange={e => { setOptions({...options,improve:e.target.checked}); setJob(null); }} /> Split crowded steps and improve views</label>
+      <p className="muted small">Model parts and positions stay unchanged. Print Letter booklets at actual size, two-sided, short-edge flip.</p>
+    </details>
     {job?.status === "ready" && job.download_url ?
       <a className="button assembly-guide-button" href={job.download_url} download>Download assembly PDF</a> :
       <button className="assembly-guide-button" onClick={generate} disabled={busy} aria-busy={busy}>
@@ -46,7 +57,7 @@ export default function AssemblyGuideButton({ modelUrl }: { modelUrl: string }) 
       </button>}
     <span className="muted small" role="status" aria-live="polite">
       {job?.status === "ready" ? `${job.pages ?? ""} pages · Printable PDF booklet` :
-        busy ? "Rendering the model's saved building steps. This can take a few minutes." :
+        busy ? "Rendering building steps. Completed images stay saved if you need to retry." :
         "Numbered steps and a complete parts list"}
     </span>
     {failure && <span className="warn-text small" role="alert">{failure}</span>}

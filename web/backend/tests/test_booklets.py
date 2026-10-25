@@ -7,7 +7,14 @@ from fastapi.testclient import TestClient
 
 import booklets
 import settings
+import store as chat_store
 from main import app
+
+
+@pytest.fixture(autouse=True)
+def isolated_store(monkeypatch):
+    # TestClient may initialise the singleton while OUTPUT_DIR is patched.
+    monkeypatch.setattr(chat_store,'_store',None)
 
 
 def test_job_snapshot_deduplicates_and_restart_is_retryable(tmp_path, monkeypatch):
@@ -47,3 +54,18 @@ def test_pdf_api_checks_paths_and_only_serves_completed_jobs(tmp_path, monkeypat
         assert response.headers['content-type'] == 'application/pdf'
         assert 'no-store' in response.headers['cache-control']
         assert 'car-guide.pdf' in response.headers['content-disposition']
+
+
+def test_options_version_the_pdf_cache_but_share_completed_render_work(tmp_path,monkeypatch):
+    monkeypatch.setattr(settings,'OUTPUT_DIR',tmp_path)
+    model=tmp_path/'car.mpd';model.write_text('0 Model\n')
+    async def wait(*args):await asyncio.sleep(100)
+    monkeypatch.setattr(booklets,'_generate',wait)
+    async def run():
+        native=await booklets.start(model)
+        letter=await booklets.start(model,print_format='letter')
+        original=await booklets.start(model,improve=False)
+        assert native['id']!=letter['id']!=original['id']
+        assert native['render_key']==letter['render_key']!=original['render_key']
+        await booklets.shutdown()
+    asyncio.run(run())

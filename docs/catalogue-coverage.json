@@ -1,0 +1,47 @@
+{
+  "market": "US",
+  "currency": "USD",
+  "checked_at": 1792887588.055428,
+  "shop_elements": 17975,
+  "verified_element_and_colour": 17697,
+  "unmapped_shop_elements": 5,
+  "colour_mismatches": 273,
+  "identity_elements": 114675,
+  "ldraw_part_aliases": 14563,
+  "ldraw_colours": 217,
+  "mapping_evidence": "Rebrickable bulk; sha256=6c5fba4cfed03fc033d8e283ca628020a92f7db8155ee7687a8784a34f0ec3bc",
+  "unmapped_sample": [
+    "6547218",
+    "6022033",
+    "4542586",
+    "4287814",
+    "6593964"
+  ],
+  "mismatch_sample": [
+    "6575800",
+    "6585117",
+    "6585118",
+    "6600064",
+    "6600751",
+    "6601029",
+    "6601429",
+    "6606286",
+    "6608109",
+    "6609122",
+    "6615501",
+    "6616899",
+    "6624494",
+    "6555188",
+    "6595617",
+    "6596812",
+    "6608528",
+    "6609633",
+    "6609638",
+    "6610042"
+  ],
+  "notes": [
+    "Coverage counts unique shop element IDs, not model placements.",
+    "No name or RGB approximation qualifies as a purchase match.",
+    "Printed parts, mould aliases and composites remain distinct unless catalogue evidence explicitly maps them."
+  ]
+}

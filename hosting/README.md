@@ -70,13 +70,14 @@ environment. It validates the model, checks the independently rendered parts
 count, and prints subassembly instructions before their parents. It does not
 invent a physically proven assembly sequence. Models without building steps
 need those steps added first. There is no additional AI call for PDF generation.
-The current PDF limits are 2,000 pieces, 250 saved steps, a 5 MB source file,
-and 30 minutes of rendering. The server runs one render at a time and queues
-at most four guide jobs. Larger models need smaller subassembly files.
+The current PDF limits are 10,000 pieces, 2,500 saved steps, a 5 MB source file,
+and 3,500 seconds of rendering per attempt. Completed render chunks resume after interruption. The server runs one render at a time and queues
+at most four guide jobs. A 2,103-piece model passed end-to-end rendering and geometry checks.
 
-To print a folded booklet, open the PDF in a reader with Booklet printing.
-Use Letter paper, both sides, and short-edge binding. PDF pages are Half Letter,
-and the page count is a multiple of four. Plain single-page printing also works.
+Choose native pages or US Letter booklet sheets in Guide options. Letter sheets
+already contain two native-sized pages in fold order. Print at actual size,
+both sides, short-edge flip. Do not apply booklet imposition a second time.
+See `docs/purchasing-and-guides.md` for pricing, private cart requests and measured fidelity limits.
 
 When moving a ChatGPT login between local Docker and hosting, use one installation
 for generation. Two copies can compete to refresh the same sign-in session.

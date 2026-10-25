@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from urllib.parse import quote, unquote, urlsplit
 
 import environment_config
@@ -38,6 +38,9 @@ import model_discovery
 import browser_auth
 import inference
 import render
+from purchasing import service as pricing
+from purchasing.database import Database as PartsDatabase, DatabaseUnavailable
+from purchasing.domain import import_csv, reviewed_items
 from attachments import validate_documents, validate_images
 import sandbox
 import settings
@@ -54,7 +57,9 @@ async def lifespan(_app: FastAPI):
         folder.mkdir(parents=True, exist_ok=True)
     sandbox.give_to_agent(settings.GENERATED_DIR)      # agent scripts may publish models there
     get_store()
+    pricing.initialize()
     yield
+    await pricing.shutdown()
     await booklets.shutdown()
     await browser_auth.shutdown()
     for chat_id in list(agent._runs):
@@ -87,7 +92,7 @@ async def same_origin_api(request: Request, call_next):
         if size > 18 * 1024 * 1024:
             return JSONResponse({"detail": "Request exceeds 18 MB"}, status_code=413)
     response = await call_next(request)
-    if request.url.path.startswith("/api/environment") or request.url.path.endswith("/edit"):
+    if request.url.path.startswith(("/api/environment", "/api/quotes", "/api/cart-intents")) or request.url.path.endswith("/edit"):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -361,6 +366,7 @@ def model_info(path: Path) -> dict:
         "info_heading": gallery.info_heading_of(path) if exists else None,
         "size": stat.st_size if stat else 0, "mtime": stat.st_mtime if stat else 0,
         "status": status, "error": error, "bom_status": bom_status, "bom_error": bom_error,
+        "quote": pricing.summary(path) if exists else None,
     }
 
 
@@ -572,6 +578,21 @@ def model_from_url(url: str) -> Optional[Path]:
     return None
 
 
+@app.get('/api/chrome-helper/download')
+def chrome_helper_download():
+    import io
+    directory=Path('/opt/chrome-helper')
+    if not directory.is_dir():directory=Path(__file__).resolve().parents[2]/'chrome-helper'
+    if not (directory/'manifest.json').is_file():_not_found('The Chrome helper package is unavailable')
+    archive=io.BytesIO()
+    with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as zip:
+        for file in directory.iterdir():
+            if file.is_file() and file.suffix in {'.json','.js','.mjs','.html','.css','.md'}:
+                zip.writestr('lego-nova-helper/'+file.name,file.read_bytes())
+    return StreamingResponse(iter([archive.getvalue()]),media_type='application/zip',headers={
+        'Content-Disposition':'attachment; filename="lego-nova-chrome-helper.zip"','Cache-Control':'private, no-store'})
+
+
 @app.get("/api/glb")
 async def model_glb(url: str):
     """The model at `url` (as the viewer loads it) as an uncompressed .glb, made
@@ -585,15 +606,113 @@ async def model_glb(url: str):
                         headers={"Cache-Control": "no-cache"})
 
 
+class QuoteRequest(BaseModel):
+    url: str = Field(max_length=2048)
+    refresh: bool = False
+
+
+@app.post('/api/quotes')
+async def quote_create(body: QuoteRequest):
+    model = model_from_url(body.url) or _not_found('Unknown model')
+    try:
+        return await pricing.quote_model(model, refresh=body.refresh)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except DatabaseUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+    except Exception:
+        logging.exception('Quote refresh failed')
+        raise HTTPException(503, 'Prices could not refresh. Your previous quote is unchanged.') from None
+
+
+@app.get('/api/quotes/summary')
+def quote_summary(url: str):
+    model=model_from_url(url) or _not_found('Unknown model')
+    return JSONResponse(pricing.summary(model),headers={'Cache-Control':'no-store'})
+
+
+@app.get('/api/quotes/{quote_id}')
+def quote_detail(quote_id: str):
+    try:
+        return PartsDatabase().quote(quote_id)
+    except (ValueError, FileNotFoundError):
+        _not_found('Unknown price quote')
+    except DatabaseUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+@app.get('/api/quotes/{quote_id}/import/{batch}')
+def quote_import(quote_id: str, batch: int, available_only: bool = False):
+    quote = quote_detail(quote_id)
+    try:
+        items = reviewed_items(quote, available_only=available_only)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    selected = items[batch * 400:(batch + 1) * 400] if batch >= 0 else []
+    if not selected: _not_found('Unknown import batch')
+    return PlainTextResponse(import_csv(selected), media_type='text/csv', headers={
+        'Content-Disposition': f'attachment; filename="lego-parts-{batch + 1}.csv"', 'Cache-Control': 'no-store'})
+
+
+class CartIntentRequest(BaseModel):
+    quote_id: str = Field(max_length=36)
+    review_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
+    available_only: bool = False
+
+
+class CartClaimRequest(BaseModel):
+    token: str = Field(min_length=32, max_length=100)
+    claim_id: str = Field(min_length=16, max_length=100)
+
+
+class CartResultRequest(CartClaimRequest):
+    result: dict
+
+
+@app.post('/api/cart-intents', status_code=201)
+def cart_intent_create(body: CartIntentRequest):
+    try:
+        return PartsDatabase().create_intent(body.quote_id, body.review_hash, body.available_only)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(409, str(exc)) from None
+    except DatabaseUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+@app.post('/api/cart-intents/{intent_id}/claim')
+def cart_intent_claim(intent_id: str, body: CartClaimRequest):
+    try:
+        return PartsDatabase().claim_intent(intent_id, body.token, body.claim_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except DatabaseUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+@app.post('/api/cart-intents/{intent_id}/result')
+def cart_intent_result(intent_id: str, body: CartResultRequest):
+    try:
+        if len(json.dumps(body.result)) > 128_000:
+            raise ValueError('Cart result is too large')
+        return PartsDatabase().intent_result(intent_id, body.token, body.claim_id, body.result)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except DatabaseUnavailable as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
 class AssemblyGuideRequest(BaseModel):
     url: str = Field(max_length=2048)
+    template: Literal["creator-31134", "city-clear"] = "creator-31134"
+    improve: bool = True
+    print_format: Literal["native", "letter"] = "native"
 
 
 @app.post("/api/assembly-guides", status_code=202)
 async def assembly_guide_create(body: AssemblyGuideRequest):
     model = model_from_url(body.url) or _not_found("not a model in My Models or Gallery")
     try:
-        return await booklets.start(model)
+        return await booklets.start(model, template=body.template, improve=body.improve, print_format=body.print_format)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except RuntimeError as exc:

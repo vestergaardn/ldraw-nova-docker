@@ -4,6 +4,7 @@ import { downloadGlb, downloadUrl, partsLabel, timeAgo, XR_TITLE, xrUrl, type Mo
 import { useApp } from "../context";
 import InfoModal from "./InfoModal";
 import AssemblyGuideButton from "./AssemblyGuideButton";
+import PartsQuote from "./PartsQuote";
 
 type Props = {
   model: ModelFile & { warnings?: string[]; created_at?: number };
@@ -164,6 +165,7 @@ export default function ModelCard({ model, showChats = false, onDelete }: Props)
             ) : null}
           </span>
         </div>
+        {model.model_url && <PartsQuote key={'quote-' + model.model_url + model.mtime} modelUrl={model.model_url} initial={model.quote} />}
         {model.model_url && <AssemblyGuideButton key={model.model_url + model.mtime} modelUrl={model.model_url} />}
       </div>
       {info && model.info_url && (

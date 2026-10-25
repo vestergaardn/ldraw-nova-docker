@@ -440,3 +440,27 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .build-activity time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .live-tool-output { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; padding: .65rem; }
 .progress-summary { margin: .4rem .7rem; font-size: .9rem; }
+
+.parts-quote { display: flex; gap: 12px; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; flex-wrap: wrap; }
+.quote-summary { display: flex; flex-direction: column; gap: 3px; }
+.parts-quote button, .parts-actions button, .parts-actions .button { min-height: 44px; }
+.parts-dialog { padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); width: min(960px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.parts-dialog::backdrop { background: rgb(0 0 0 / 60%); }
+.parts-review { padding: 20px; }
+.quote-total { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.quote-total strong { font-size: 28px; font-variant-numeric: tabular-nums; }
+.parts-table-wrap { overflow-x: auto; margin-block: 16px; }
+.parts-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.parts-table th, .parts-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.parts-table small { display: block; color: var(--muted); margin-top: 3px; }
+.parts-table td:nth-child(2), .parts-table td:nth-child(4) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.parts-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 16px; }
+.available-choice { display: flex; align-items: flex-start; gap: 10px; padding-block: 12px; }
+.available-choice input { width: 20px; height: 20px; flex: 0 0 auto; }
+@media (max-width: 600px) { .parts-review { padding: 12px; } .parts-actions > * { flex: 1 1 100%; text-align: center; } .parts-table { min-width: 560px; } }
+
+.guide-options summary { cursor: pointer; font-size: 13px; padding: 5px 0; }
+.guide-options label { display: grid; gap: 5px; margin-top: 10px; font-size: 12px; }
+.guide-options select { width: 100%; min-width: 0; }
+.guide-options .guide-improve { display: flex; align-items: start; }
+.guide-improve input { width: auto; margin-top: 3px; }
