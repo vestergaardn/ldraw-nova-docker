@@ -48,6 +48,7 @@ export type ModelFile = {
   bom_error: string | null;
   chats?: { id: string; title: string }[]; // chats that produced it (My Models page)
   quote?: QuoteSummary | null;
+  guide_id?: string | null; // assembly guide started after the build, with default options
 };
 
 /** A model a chat produced: a reference into data/generated. */

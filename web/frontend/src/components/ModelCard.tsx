@@ -166,7 +166,7 @@ export default function ModelCard({ model, showChats = false, onDelete }: Props)
           </span>
         </div>
         {model.model_url && <PartsQuote key={'quote-' + model.model_url + model.mtime} modelUrl={model.model_url} initial={model.quote} />}
-        {model.model_url && <AssemblyGuideButton key={model.model_url + model.mtime} modelUrl={model.model_url} revision={model.mtime} />}
+        {model.model_url && <AssemblyGuideButton key={model.model_url + model.mtime} modelUrl={model.model_url} revision={model.mtime} prepared={model.guide_id} />}
       </div>
       {info && model.info_url && (
         <InfoModal title={model.description || model.file} url={model.info_url} onClose={() => setInfo(false)} />

@@ -367,6 +367,7 @@ def model_info(path: Path) -> dict:
         "size": stat.st_size if stat else 0, "mtime": stat.st_mtime if stat else 0,
         "status": status, "error": error, "bom_status": bom_status, "bom_error": bom_error,
         "quote": pricing.summary(path) if exists else None,
+        "guide_id": booklets.prepared(path) if exists and not in_gallery else None,
     }
 
 

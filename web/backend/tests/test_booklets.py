@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -97,3 +98,61 @@ def test_running_job_exposes_saved_progress_and_elapsed_time(tmp_path, monkeypat
         assert booklets.status(job['id'])['status']=='rendering'
         await booklets.shutdown()
     asyncio.run(run())
+
+
+def test_build_prepares_the_default_guide_and_cards_follow_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings,'OUTPUT_DIR',tmp_path)
+    model=tmp_path/'car.mpd';model.write_text('0 Model\n')
+    async def wait(*args):await asyncio.sleep(100)
+    monkeypatch.setattr(booklets,'_generate',wait)
+    async def run():
+        assert booklets.prepared(model) is None
+        await booklets.prepare(model)
+        job=await booklets.start(model)
+        assert booklets.prepared(model)==job['id'], 'The card must follow the job a request would reuse'
+        booklets._save(booklets.directory(job['id']),{**job,'status':'failed'})
+        await booklets.shutdown()
+        assert booklets.prepared(model) is None, 'A failed background attempt keeps the create button'
+        model.write_text('0 Edited model\n')
+        assert booklets.prepared(model) is None
+    asyncio.run(run())
+
+
+def test_preparation_keeps_a_queue_slot_for_requested_guides(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings,'OUTPUT_DIR',tmp_path)
+    async def wait(*args):await asyncio.sleep(100)
+    monkeypatch.setattr(booklets,'_generate',wait)
+    async def run():
+        for number in range(booklets.MAX_PENDING-1):
+            other=tmp_path/f'other{number}.mpd';other.write_text(f'0 Other {number}\n')
+            await booklets.start(other)
+        model=tmp_path/'car.mpd';model.write_text('0 Model\n')
+        await booklets.prepare(model)
+        assert booklets.prepared(model) is None
+        assert (await booklets.start(model))['status']=='queued'
+        await booklets.shutdown()
+    asyncio.run(run())
+
+
+def test_turn_prepares_only_its_final_published_model(tmp_path, monkeypatch):
+    import agent
+    monkeypatch.setattr(settings,'OUTPUT_DIR',tmp_path)
+    monkeypatch.setattr(settings,'GENERATED_DIR',tmp_path/'generated')
+    store=chat_store.get_store()
+    chat=store.create_chat()
+    (tmp_path/'generated').mkdir()
+    paths=[tmp_path/'generated'/f'car-v{number}.mpd' for number in (1,2,3)]
+    for path in paths:path.write_text(f'0 {path.stem}\n')
+    store.add_model(chat['id'],'old',paths[0],[])
+    time.sleep(0.01)
+    since=time.time()
+    for path in paths[1:]:
+        store.add_model(chat['id'],path.stem,path,[])
+    started=[]
+    async def prepare(model):started.append(model)
+    monkeypatch.setattr(booklets,'prepare',prepare)
+    asyncio.run(agent.prepare_guide(store,chat['id'],since))
+    assert started==[store.resolve(chat['id'],store.models(chat['id'])[-1]['model'])]
+    started.clear()
+    asyncio.run(agent.prepare_guide(store,chat['id'],time.time()+60))
+    assert started==[]

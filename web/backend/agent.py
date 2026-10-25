@@ -18,6 +18,7 @@ from typing import AsyncIterator, Callable, Optional
 
 import litellm
 
+import booklets
 import llm_config
 import browser_auth
 import inference
@@ -278,6 +279,16 @@ async def subscribe(chat_id: str) -> AsyncIterator[tuple[str, dict]]:
         run.subscribers.discard(queue)
 
 
+async def prepare_guide(store: ChatStore, chat_id: str, since: float) -> None:
+    """Start the assembly guide for the turn's final published model."""
+    try:
+        models = [store.resolve(chat_id, ref["model"]) for ref in store.models(chat_id) if ref["created_at"] >= since]
+        if models and models[-1].is_file():
+            await booklets.prepare(models[-1])
+    except Exception:  # noqa: BLE001 - the guide can still be created on request
+        log.exception("could not prepare the assembly guide for chat %s", chat_id)
+
+
 async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
     chat_id = run.chat_id
     caps = llm_config.capabilities(entry)
@@ -290,6 +301,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         run.emit("saved", {"message_id": msg_id})
         return msg_id
 
+    stopped = False
     try:
         if entry.get("auth_mode") == "browser" and entry["litellm_params"]["model"].startswith("anthropic/"):
             from claude_agent import run_claude
@@ -371,6 +383,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
             save({"role": "assistant", "_ui_only": True, "_notice": True,
                   "content": f"Stopped after {MAX_STEPS} steps. Send a message to continue."})
     except asyncio.CancelledError:
+        stopped = True
         if run.draft:
             save({"role": "assistant", "content": run.draft})
         save({"role": "assistant", "_ui_only": True, "_notice": True, "content": "Stopped."})
@@ -386,6 +399,9 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
             if not future.done():
                 future.cancel()
         run.approvals.clear()
+        # Queue the guide before "done" so the reloaded card already shows it.
+        if not stopped:
+            await prepare_guide(store, chat_id, run.started_at)
         run.emit("done", {})
 
 

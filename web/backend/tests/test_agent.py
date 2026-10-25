@@ -88,6 +88,10 @@ def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: Cha
         [chunk(content="Done.")],
     ])
     monkeypatch.setattr(agent.litellm, "acompletion", fake)
+    prepared = []
+    async def prepare(model):
+        prepared.append(model)
+    monkeypatch.setattr(agent.booklets, "prepare", prepare)
     import os
     os.chmod(settings.DATA_DIR.parent, 0o755)
     chat = store.create_chat()
@@ -102,6 +106,7 @@ def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: Cha
     assert messages[-1]["content"] == "Done.", messages
     [ref] = store.models(chat["id"])
     model = settings.GENERATED_DIR / "agent-bridge-v1.mpd"
+    assert prepared == [model.resolve()], "The finished turn must start the guide for its model"
     assert model.read_bytes() == (store.work_dir(chat["id"]) / "bridge.mpd").read_bytes()
     assert model.with_suffix(".png").stat().st_size > 1000
     assert any(ref["id"] in m.get("_models", []) for m in messages)

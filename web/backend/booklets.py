@@ -20,8 +20,10 @@ RENDER_VERSION = '2:creator-31134-v1:plan-4:outfit-1'
 VERSION = '3:creator-31134-v1:plan-4:outfit-2:cover-2'
 TIMEOUT = 3500
 MAX_PENDING = 4
+DEFAULTS = dict(template='creator-31134', improve=True, print_format='native')
 _tasks: dict[str, asyncio.Task] = {}
 _models: dict[str, Path] = {}
+_prepared: dict[tuple, str] = {}
 log = logging.getLogger(__name__)
 
 
@@ -77,15 +79,45 @@ def is_busy(model):
     return model.resolve() in _models.values()
 
 
+def _keys(model, content, template, improve, print_format):
+    if len(content) > 5 * 1024 * 1024:
+        raise ValueError('Choose a model smaller than 5 MB for an assembly guide')
+    render_key = hashlib.sha256(RENDER_VERSION.encode() + str(model.resolve()).encode() + json.dumps(dict(template=template,improve=improve),sort_keys=True).encode() + content).hexdigest()[:32]
+    return render_key, hashlib.sha256((VERSION+render_key+print_format).encode()).hexdigest()[:32]
+
+
+def prepared(model):
+    """The default guide's job ID once it is queued, rendering or ready."""
+    try:
+        stat = model.stat()
+        revision = (str(model.resolve()), stat.st_mtime_ns, stat.st_size)
+        if revision not in _prepared:
+            if len(_prepared) > 1000:
+                _prepared.clear()
+            _prepared[revision] = _keys(model, model.read_bytes(), **DEFAULTS)[1]
+        key = _prepared[revision]
+        # A failed background attempt leaves the normal create button in place.
+        return key if status(key)['status'] != 'failed' else None
+    except (OSError, ValueError):
+        return None
+
+
+async def prepare(model):
+    """Start the default guide after a build so it is ready when requested."""
+    if len(_tasks) >= MAX_PENDING - 1:
+        return  # Keep a queue slot for a guide someone asks for.
+    try:
+        await start(model, **DEFAULTS)
+    except (OSError, ValueError, RuntimeError) as exc:
+        log.info('Did not prepare an assembly guide for %s: %s', model.name, exc)
+
+
 async def start(model, *, template='creator-31134', improve=True, print_format='native'):
     if template not in {'creator-31134','city-clear'} or print_format not in {'native','letter'} or not isinstance(improve,bool):
         raise ValueError('Invalid guide options')
     options=dict(template=template,improve=improve,print_format=print_format)
     content = await asyncio.to_thread(model.read_bytes)
-    if len(content) > 5 * 1024 * 1024:
-        raise ValueError('Choose a model smaller than 5 MB for an assembly guide')
-    render_key = hashlib.sha256(RENDER_VERSION.encode() + str(model.resolve()).encode() + json.dumps(dict(template=template,improve=improve),sort_keys=True).encode() + content).hexdigest()[:32]
-    key = hashlib.sha256((VERSION+render_key+print_format).encode()).hexdigest()[:32]
+    render_key, key = _keys(model, content, template, improve, print_format)
     folder = directory(key)
     if key in _tasks or (folder / 'booklet.pdf').is_file():
         return status(key)

@@ -15,7 +15,7 @@ function elapsed(seconds: number) {
   return seconds>=60 ? `${Math.floor(seconds/60)}m ${seconds%60}s` : `${seconds}s`;
 }
 
-export default function AssemblyGuideButton({ modelUrl, revision }: { modelUrl: string; revision: number }) {
+export default function AssemblyGuideButton({ modelUrl, revision, prepared }: { modelUrl: string; revision: number; prepared?: string | null }) {
   const storageKey=`lego-guide-v1:${modelUrl}:${revision}`;
   const [saved] = useState(() => savedGuide(storageKey));
   const [job, setJob] = useState<AssemblyGuide | null>(() => saved ? {id:saved.id,status:"queued"} : null);
@@ -25,6 +25,12 @@ export default function AssemblyGuideButton({ modelUrl, revision }: { modelUrl: 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const busy = starting || job?.status === "queued" || job?.status === "rendering";
+  const defaultOptions = options.template===defaults.template && options.improve===defaults.improve && options.print_format===defaults.print_format;
+
+  useEffect(() => {
+    // Builds start the default guide on the server; follow it instead of offering a new one.
+    if (prepared && !job && defaultOptions) setJob({id:prepared,status:"queued"});
+  }, [prepared,job===null,defaultOptions]);
 
   useEffect(() => {
     try {
