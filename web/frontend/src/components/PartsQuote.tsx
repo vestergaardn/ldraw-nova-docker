@@ -20,7 +20,7 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
   const pending = useRef<string | null>(null);
   useEffect(() => setSummary(initial), [initial]);
   useEffect(() => {
-    if (summary && 'id' in summary) return;
+    if (summary && 'id' in summary && !summary.stale) return;
     let cancelled=false;
     const timer=setTimeout(async () => { try { const next=await api.quoteSummary(modelUrl); if (!cancelled) setSummary(next); } catch { if (!cancelled) setSummary({revision:'pending',status:'pending'}); } },4000);
     return () => {cancelled=true;clearTimeout(timer);};
