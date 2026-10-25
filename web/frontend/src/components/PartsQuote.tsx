@@ -78,18 +78,6 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
       <header className="modal-head"><strong id="parts-title">Parts and cost</strong><button className="icon-button" aria-label="Close parts review" onClick={() => setOpen(false)}>×</button></header>
       <div className="parts-review">
         {quote && <>
-          <div className="quote-total"><strong>{quote.priced_quantity ? money(quote.subtotal ?? quote.known_subtotal) : 'Price unavailable'}</strong><span>{quote.subtotal === null ? 'Known parts subtotal' : 'Parts subtotal'} · USD</span></div>
-          <p>{quote.purchasable_quantity} of {quote.total_quantity} pieces available. {quote.unresolved_lines} parts-list rows need review.</p>
-          <p className="muted small">{quote.fees.length ? quote.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation.'} LEGO calculates shipping and tax at checkout.</p>
-          <div className="parts-table-wrap"><table className="parts-table"><thead><tr><th>Part / colour</th><th>Quantity</th><th>Element</th><th>Price</th><th>Status</th></tr></thead><tbody>
-            {quote.lines.map(line => <tr key={`${line.part}-${line.color}`}>
-              <td><strong>{line.name || line.part}</strong><small>{line.part} · LDraw colour {line.color}</small></td>
-              <td>{line.quantity}</td><td>{line.element_id || 'Unresolved'}</td>
-              <td>{line.line_total === null ? 'Unknown' : money(line.line_total)}</td>
-              <td>{labels[line.state]}{line.stale && <small>Needs price refresh</small>}{line.issue && <small>{line.issue.replaceAll('_', ' ')}</small>}
-                {line.alternatives.map(a => <small key={a.element_id}>Possible {a.relationship.replaceAll('_', ' ')}: {a.part}, element {a.element_id}. Review the model before replacing.</small>)}</td>
-            </tr>)}
-          </tbody></table></div>
           {!complete && <label className="available-choice"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} /> Add only verified, available pieces. Keep all other pieces unresolved.</label>}
           <p className="muted small">Identity data: <a href="https://rebrickable.com/downloads/" target="_blank" rel="noreferrer">Rebrickable</a>. Prices and stock: LEGO US. No replacements apply automatically.</p>
         </>}
@@ -103,6 +91,20 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
         {!!cartItems.length && <ul className="cart-results">{cartItems.map(item => <li key={item.elementId}>Element {item.elementId}: {item.in_bag ?? 0} confirmed in bag; {item.added} added to parts list; {item.missing} missing.</li>)}</ul>}
         {error && <p className="warn-text" role="alert">{error}</p>}
         <p className="muted small">Cart actions require your request. Checkout stays on LEGO’s website.</p>
+        {quote && <>
+          <div className="quote-total"><strong>{quote.priced_quantity ? money(quote.subtotal ?? quote.known_subtotal) : 'Price unavailable'}</strong><span>{quote.subtotal === null ? 'Known parts subtotal' : 'Parts subtotal'} · USD</span></div>
+          <p>{quote.purchasable_quantity} of {quote.total_quantity} pieces available. {quote.unresolved_lines} parts-list rows need review.</p>
+          <p className="muted small">{quote.fees.length ? quote.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation.'} LEGO calculates shipping and tax at checkout.</p>
+          <div className="parts-table-wrap"><table className="parts-table"><thead><tr><th>Part / colour</th><th>Quantity</th><th>Element</th><th>Price</th><th>Status</th></tr></thead><tbody>
+            {quote.lines.map(line => <tr key={`${line.part}-${line.color}`}>
+              <td><strong>{line.name || line.part}</strong><small>{line.part} · LDraw colour {line.color}</small></td>
+              <td>{line.quantity}</td><td>{line.element_id || 'Unresolved'}</td>
+              <td>{line.line_total === null ? 'Unknown' : money(line.line_total)}</td>
+              <td>{labels[line.state]}{line.stale && <small>Needs price refresh</small>}{line.issue && <small>{line.issue.replaceAll('_', ' ')}</small>}
+                {line.alternatives.map(a => <small key={a.element_id}>Possible {a.relationship.replaceAll('_', ' ')}: {a.part}, element {a.element_id}. Review the model before replacing.</small>)}</td>
+            </tr>)}
+          </tbody></table></div>
+        </>}
       </div>
     </dialog>, document.body)}
   </div>;
