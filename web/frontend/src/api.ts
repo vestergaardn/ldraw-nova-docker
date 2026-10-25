@@ -5,6 +5,8 @@ export type GuideOptions = { template: "creator-31134" | "city-clear"; improve: 
 export type AssemblyGuide = {
   id: string; status: "queued" | "rendering" | "ready" | "failed";
   download_url?: string; pages?: number; parts?: number; steps?: number; error?: string;
+  elapsed_seconds?: number;
+  progress?: { stage: "checking" | "steps" | "verify" | "parts" | "layout" | "complete"; completed: number; total: number | null; updated_at: number };
 };
 
 export type QuoteLine = {
@@ -138,8 +140,8 @@ export const api = {
   createCartIntent: (quote: ModelQuote, availableOnly: boolean) => request<CartIntent>('/api/cart-intents', {
     method: 'POST', body: json({ quote_id: quote.id, review_hash: quote.review_hash, available_only: availableOnly }),
   }),
-  createAssemblyGuide: (url: string, options: GuideOptions) => request<AssemblyGuide>("/api/assembly-guides", { method: "POST", body: json({ url, ...options }) }),
-  assemblyGuide: (id: string) => request<AssemblyGuide>(`/api/assembly-guides/${id}`),
+  createAssemblyGuide: (url: string, options: GuideOptions) => request<AssemblyGuide>("/api/assembly-guides", { method: "POST", body: json({ url, ...options }), signal: AbortSignal.timeout(30000) }),
+  assemblyGuide: (id: string) => request<AssemblyGuide>(`/api/assembly-guides/${id}`, { signal: AbortSignal.timeout(15000) }),
   environment: () => request<{ variables: EnvironmentVariable[] }>("/api/environment"),
   checkEnvironment: (name: string, id?: string) => request<{ preconfigured: boolean; saved: boolean }>(`/api/environment/check?name=${encodeURIComponent(name)}&exclude_id=${encodeURIComponent(id ?? "")}`),
   saveEnvironment: (variables: EnvironmentUpdate[]) => request<{ variables: EnvironmentVariable[] }>("/api/environment", { method: "PUT", body: json({ variables }) }),

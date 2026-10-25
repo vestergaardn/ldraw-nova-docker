@@ -73,3 +73,27 @@ def test_options_version_the_pdf_cache_but_share_completed_render_work(tmp_path,
         assert revised['id']!=native['id'] and revised['render_key']==native['render_key']
         await booklets.shutdown()
     asyncio.run(run())
+
+
+def test_running_job_exposes_saved_progress_and_elapsed_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings,'OUTPUT_DIR',tmp_path)
+    model=tmp_path/'car.mpd';model.write_text('0 Model\n')
+    async def wait(*args):await asyncio.sleep(100)
+    monkeypatch.setattr(booklets,'_generate',wait)
+    async def run():
+        job=await booklets.start(model)
+        folder=booklets.directory(job['id'])
+        booklets._save(folder,{**job,'status':'rendering','started_at':job['created_at']})
+        progress=booklets.root()/'render-cache'/job['render_key']/'progress.json'
+        progress.parent.mkdir(parents=True)
+        progress.write_text(json.dumps({'stage':'steps','completed':8,'total':30,'updated_at':job['created_at']}))
+        response=TestClient(app).get('/api/assembly-guides/'+job['id'])
+        result=response.json()
+        assert result['progress']['completed']==8 and result['progress']['total']==30
+        assert result['elapsed_seconds']>=0 and result['progress']['stage']=='steps'
+        progress.write_text(json.dumps({'stage':'complete','completed':1,'total':1,'updated_at':job['created_at']-10}))
+        assert 'progress' not in booklets.status(job['id']), 'A retry must not show a previous attempt as complete'
+        progress.write_text('{interrupted write')
+        assert booklets.status(job['id'])['status']=='rendering'
+        await booklets.shutdown()
+    asyncio.run(run())

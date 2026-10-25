@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 import re
 import time
@@ -50,6 +51,25 @@ def status(job_id):
         data.update(status='ready', download_url=f'/api/assembly-guides/{job_id}/pdf')
     elif data['status'] in ('queued', 'rendering') and job_id not in _tasks:
         data.update(status='failed', error='Generation stopped when the server restarted. Please try again.')
+    data['elapsed_seconds']=max(0,int(time.time()-data.get('created_at',time.time())))
+    if data['status']=='rendering' and re.fullmatch(r'[a-f0-9]{32}',data.get('render_key','')):
+        path=root()/'render-cache'/data['render_key']/'progress.json'
+        try:
+            # The subprocess writes an atomic, bounded progress record. Never
+            # expose its filesystem paths or arbitrary subprocess output.
+            if path.stat().st_size>2048:raise ValueError('Invalid progress size')
+            progress=json.loads(path.read_text())
+            stage=progress['stage'];done=progress['completed'];total=progress['total'];updated=progress['updated_at']
+            if stage not in {'checking','steps','verify','parts','layout','complete'}:
+                raise ValueError('Invalid progress stage')
+            if type(done) is not int or not 0<=done<=20000:raise ValueError('Invalid progress count')
+            if total is not None and (type(total) is not int or not done<=total<=20000):
+                raise ValueError('Invalid progress total')
+            if not isinstance(updated,(int,float)) or not math.isfinite(updated):raise ValueError('Invalid progress time')
+            if updated>=data.get('started_at',data['created_at']):
+                data['progress']=dict(stage=stage,completed=done,total=total,updated_at=updated)
+        except (OSError,ValueError,KeyError,TypeError):
+            pass
     return data
 
 
@@ -95,7 +115,7 @@ async def _generate(key, model, source, data):
     try:
         # Share the renderer lock with snapshots and BOM generation.
         async with render._rendering(model):
-            data['status'] = 'rendering'
+            data.update(status='rendering',started_at=time.time())
             _save(folder, data)
             sandbox.give_to_agent(root())
             result = await sandbox.run(

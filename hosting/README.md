@@ -4,6 +4,11 @@ This fork adds **Create assembly guide** to every model card. It generates a
 printable PDF using the model's existing construction steps. A persistent job
 keeps rendering if the browser disconnects; clicking again resumes its status.
 Completed PDFs are cached by the model contents and generator version.
+Guide cards show the current stage, completed image count and elapsed time.
+The browser remembers the guide for each model revision, so a page reload resumes
+status checks. Network interruptions retry without losing the job.
+Booklets render only cameras used on their pages and skip unused per-thumbnail
+CSV exports. The independent full-model parts check remains mandatory.
 
 ## Hosting
 
