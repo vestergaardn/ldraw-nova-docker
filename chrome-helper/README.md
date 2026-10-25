@@ -35,3 +35,7 @@ The CSV fallback contains `elementId,quantity`, split into 400-piece files. Impo
 The network adapter follows LEGO's publicly shipped website operations. Automated tests use a simulated shop.
 Live additions are intentionally untested until Christian separately approves a named model and reviewed quantities.
 The extension stops if LEGO changes its API, price, stock, quantity limit, or cart shape.
+
+If LEGO returns only an opaque grouped bag item, the helper cannot verify individual piece quantities.
+It stops with an unconfirmed result and never repeats that transfer. Review the bag before a new request.
+This response shape needs verification during the separately approved live test.

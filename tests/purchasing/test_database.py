@@ -30,6 +30,7 @@ def db():
  return d
 
 def seed(db):
+ with db.connection() as c:c.execute("delete from lego.element_observations where element_id='300121'")
  i=IdentityIndex();i.evidence='isolated-fixture';i.parts['3001'].add('3001');i.colors['4'].add('4');i.lego_colors['4'].add('21');i.elements['3001','4'].add('300121');i.element_identity['300121']=('3001','4')
  identity=db.import_identities(i,{})
  now=time.time();elements={str(500000+n):CatalogueElement(str(500000+n),'other','21','Other','available',1,now) for n in range(1000)}

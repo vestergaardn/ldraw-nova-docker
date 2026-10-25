@@ -134,8 +134,14 @@ export async function fillCart(intent, adapter, storage) {
       if (!response?.lineItems?.length)throw Error('LEGO did not return a bag transfer. Review the bag.');
       for (const line of response.lineItems) if (!after.lineItems.some(item=>item.id===line.id && item.quantity===line.quantity))
         throw Error('The LEGO bag did not confirm its returned contents. Review the bag.');
-      if (!response.lineItems.some(line=>!before.lineItems.some(old=>old.id===line.id) || before.lineItems.find(old=>old.id===line.id).quantity<line.quantity))
-        throw Error('LEGO did not confirm a new bag item. Review the bag.');
+      // A transfer receipt alone cannot prove the pieces reached the main bag.
+      // Require an exact element-level delta, including pre-existing draft pieces.
+      const countInBag=(bag,sku)=>bag.lineItems.filter(line=>line.productVariant?.sku===sku)
+        .reduce((sum,line)=>sum+line.quantity,0);
+      for (const line of cart.brickLineItems) {
+        if (countInBag(after,line.sku)-countInBag(before,line.sku)!==line.quantity)
+          throw Error('LEGO did not expose the exact transferred quantities in the bag. Review it before continuing.');
+      }
       const moved=await adapter.readCarts();
       if (moved.some(c=>c.type===channel && c.brickLineItems.length))throw Error('The transferred parts cart did not clear. Review the LEGO bag.');
       batch.state='confirmed';journal.mainBaseline=after;

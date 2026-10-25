@@ -17,7 +17,7 @@ function fixture() {
    async add(channel,items){adds++;const cart=carts.find(c=>c.type===channel);for(const item of items){let line=cart.brickLineItems.find(l=>l.sku===item.sku);if(!line){line={sku:item.sku,quantity:0};cart.brickLineItems.push(line);}line.quantity+=reject?Math.max(0,item.quantity-1):item.quantity;}
      if(external)cart.brickLineItems.push({sku:'12345',quantity:1});
      if(loseAdd){loseAdd=false;throw Error('lost add response');}},
-   async transfer(cart){transfers++;main.lineItems.push({id:'bag-'+cart.id,quantity:1,productVariant:{sku:'parts-'+cart.type}});
+   async transfer(cart){transfers++;for(const line of cart.brickLineItems)main.lineItems.push({id:'bag-'+cart.id+'-'+line.sku,quantity:line.quantity,productVariant:{sku:line.sku}});
      carts.find(c=>c.id===cart.id).brickLineItems=[];if(loseTransfer){loseTransfer=false;throw Error('lost transfer response');}return structuredClone(main);},
  };
  return {adapter,storage,carts,main,get adds(){return adds;},get transfers(){return transfers;},loseAdd(){loseAdd=true;},loseTransfer(){loseTransfer=true;},reject(){reject=true;},external(){external=true;}};
@@ -60,7 +60,7 @@ test('more than 400 distinct pieces use bounded batches and preserve previous gr
  const f=fixture(),intent=makeIntent();intent.items=Array.from({length:450},(_,i)=>({elementId:String(700000+i),quantity:1,unitPrice:10}));
  f.adapter.catalogue=async()=>intent.items.map(i=>({id:i.elementId,availability:'AVAILABLE',deliveryChannel:'pab',price:{currencyCode:'USD',centAmount:10},maxOrderQuantity:999}));
  const calls=[];const add=f.adapter.add;f.adapter.add=async(channel,items)=>{assert(items.length<=200);calls.push(items.length);return add(channel,items);};
- f.adapter.transfer=async cart=>{f.main.lineItems.push({id:'group-'+f.main.lineItems.length,quantity:1,productVariant:{sku:'parts'}});f.carts.find(c=>c.id===cart.id).brickLineItems=[];return structuredClone(f.main);};
+ f.adapter.transfer=async cart=>{for(const line of cart.brickLineItems)f.main.lineItems.push({id:'piece-'+f.main.lineItems.length,quantity:line.quantity,productVariant:{sku:line.sku}});f.carts.find(c=>c.id===cart.id).brickLineItems=[];return structuredClone(f.main);};
  const result=await fillCart(intent,f.adapter,f.storage);
  assert.equal(result.state,'complete');assert.deepEqual(calls,[198,200,52]);
  assert.equal(result.items.reduce((n,i)=>n+i.in_bag,0),450);assert.equal(f.main.lineItems[0].id,'existing-set');
@@ -69,4 +69,12 @@ test('more than 400 distinct pieces use bounded batches and preserve previous gr
 test('foreign intent IDs, duplicate elements and noninteger quantities are rejected',()=>{
  const i=makeIntent();
  for (const change of [{id:'../../bad'},{items:[i.items[0],i.items[0]]},{items:[{...i.items[0],quantity:1.5}]}])assert.throws(()=>validateIntent({...i,...change}));
+});
+
+test('a transfer receipt without exact main-bag quantities stays unconfirmed and never retries transfer',async()=>{
+ const f=fixture(),intent=makeIntent();const transfer=f.adapter.transfer;
+ f.adapter.transfer=async cart=>{await transfer(cart);f.main.lineItems.find(l=>l.productVariant.sku==='300121').quantity--;return structuredClone(f.main);};
+ await assert.rejects(fillCart(intent,f.adapter,f.storage),/exact transferred quantities/);
+ const journal=await f.storage.get(intent.id);assert.equal(journal.result.items[0].in_bag,0);
+ await assert.rejects(fillCart(intent,f.adapter,f.storage),/transfer response was lost/);assert.equal(f.transfers,1);
 });

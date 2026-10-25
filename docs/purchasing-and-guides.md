@@ -20,7 +20,7 @@ Download the private extension from the parts review. `chrome-helper/README.md` 
 
 A request is single-use, but its original helper claim may resume while valid. Chrome stores a journal before mutations. It reconciles lost add responses, preserves existing quantities, splits large lists into compatible batches and verifies the bag after transferring each group. It never retries an ambiguous transfer, substitutes a part, pays or checks out.
 
-Live cart additions remain untested and require separate approval naming a model and reviewed quantities. Automated tests use a simulated LEGO adapter, including 450 distinct pieces.
+Live cart additions remain untested and require separate approval naming a model and reviewed quantities. Automated tests use a simulated LEGO adapter, including 450 distinct pieces. The main bag must expose exact element quantities. An opaque grouped response stays unconfirmed and blocks further transfers until reviewed.
 
 ## Instruction engine
 
