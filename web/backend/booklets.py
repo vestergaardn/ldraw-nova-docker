@@ -14,7 +14,9 @@ import sandbox
 import settings
 import toolkit
 
-VERSION = '2:creator-31134-v1:plan-4:outfit-1'
+# Font-only PDF changes reuse the already verified geometry renders.
+RENDER_VERSION = '2:creator-31134-v1:plan-4:outfit-1'
+VERSION = '2:creator-31134-v1:plan-4:outfit-2'
 TIMEOUT = 3500
 MAX_PENDING = 4
 _tasks: dict[str, asyncio.Task] = {}
@@ -62,8 +64,8 @@ async def start(model, *, template='creator-31134', improve=True, print_format='
     content = await asyncio.to_thread(model.read_bytes)
     if len(content) > 5 * 1024 * 1024:
         raise ValueError('Choose a model smaller than 5 MB for an assembly guide')
-    render_key = hashlib.sha256(VERSION.encode() + str(model.resolve()).encode() + json.dumps(dict(template=template,improve=improve),sort_keys=True).encode() + content).hexdigest()[:32]
-    key = hashlib.sha256((render_key+print_format).encode()).hexdigest()[:32]
+    render_key = hashlib.sha256(RENDER_VERSION.encode() + str(model.resolve()).encode() + json.dumps(dict(template=template,improve=improve),sort_keys=True).encode() + content).hexdigest()[:32]
+    key = hashlib.sha256((VERSION+render_key+print_format).encode()).hexdigest()[:32]
     folder = directory(key)
     if key in _tasks or (folder / 'booklet.pdf').is_file():
         return status(key)
@@ -117,7 +119,7 @@ async def _generate(key, model, source, data):
             report = json.loads(result.stdout)
             data.update(status='ready', pages=report['pages'], parts=report['parts'], steps=report['steps'],
                         native_pages=report.get('native_pages'), fidelity=report.get('fidelity'),
-                        geometry_preserved=report.get('geometry_preserved'),font=report.get('font'))
+                        geometry_preserved=report.get('geometry_preserved'),font=report.get('font'),font_version=report.get('font_version'))
             _save(folder, data)
     except asyncio.CancelledError:
         data.update(status='failed', error='Generation stopped. Please try again.')

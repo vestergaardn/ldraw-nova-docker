@@ -68,4 +68,8 @@ def test_options_version_the_pdf_cache_but_share_completed_render_work(tmp_path,
         assert native['id']!=letter['id']!=original['id']
         assert native['render_key']==letter['render_key']!=original['render_key']
         await booklets.shutdown()
+        monkeypatch.setattr(booklets,'VERSION',booklets.VERSION+':font-fix')
+        revised=await booklets.start(model)
+        assert revised['id']!=native['id'] and revised['render_key']==native['render_key']
+        await booklets.shutdown()
     asyncio.run(run())
