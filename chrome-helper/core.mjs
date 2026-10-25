@@ -95,14 +95,14 @@ export async function fillCart(intent, adapter, storage) {
       if ((baseline[key(item.channel, item.elementId)] || 0) + item.quantity > (element.maxOrderQuantity ?? 999))
         throw Error(`Element ${item.elementId} exceeds its quantity limit with the existing cart.`);
     }
-    journal = { version:2, id: intent.id, items, baseline, mainBaseline: main, state: 'adding', added: {}, confirmed:{}, batches:makeBatches(items,baseline), cursor:0 };
+    journal = { version:3, id: intent.id, items, baseline, mainBaseline: main, state: 'adding', added: {}, confirmed:{}, batches:makeBatches(items,baseline), cursor:0 };
     await storage.set(intent.id, journal);
   }
-  if (journal.version!==2)throw Error('This request uses an older helper. Review its LEGO bag before continuing.');
+  if (journal.version!==3)throw Error('This request uses an older helper. Review its LEGO bag before continuing.');
   try {
     for (;journal.cursor<journal.batches.length;) {
       const batch=journal.batches[journal.cursor],channel=batch.channel;
-      if (batch.state==='sent') throw Error('A bag transfer response was lost. Review the LEGO bag before creating another request.');
+      if (batch.state==='sent') throw Error('A previous bag transfer is unconfirmed. Review the LEGO bag before creating another request.');
       let carts=await adapter.readCarts(), current=quantities(carts);
       reconcile(journal,current,batch);
       const remaining=[];

@@ -1,15 +1,44 @@
 {
   "manifest_version": 3,
   "name": "LEGO Nova private cart helper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Add a reviewed LEGO Nova parts list only after your explicit request.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://lego-nova.vercel.app/*", "https://www.lego.com/*"],
-  "background": {"service_worker": "worker.js", "type": "module"},
-  "action": {"default_title": "LEGO Nova cart request", "default_popup": "popup.html"},
-  "content_scripts": [
-    {"matches": ["https://lego-nova.vercel.app/*"], "js": ["app.js"], "run_at": "document_idle"},
-    {"matches": ["https://www.lego.com/en-us/*"], "js": ["lego.js"], "run_at": "document_idle"}
+  "permissions": [
+    "storage"
   ],
-  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+  "host_permissions": [
+    "https://lego-nova.vercel.app/*",
+    "https://www.lego.com/*"
+  ],
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "LEGO Nova cart request",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://lego-nova.vercel.app/*"
+      ],
+      "js": [
+        "app.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.lego.com/en-us/*"
+      ],
+      "js": [
+        "lego.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
 }

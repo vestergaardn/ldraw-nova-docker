@@ -41,7 +41,7 @@ test('lost add response reconciles before resuming and does not duplicate',async
 });
 test('lost bag transfer response never transfers twice',async()=>{
  const f=fixture(),i=makeIntent();f.loseTransfer();await assert.rejects(fillCart(i,f.adapter,f.storage),/lost transfer/);
- await assert.rejects(fillCart(i,f.adapter,f.storage),/transfer response was lost/);assert.equal(f.transfers,1);
+ await assert.rejects(fillCart(i,f.adapter,f.storage),/bag transfer is unconfirmed/);assert.equal(f.transfers,1);
 });
 test('partial quantities remain reported and do not transfer an incomplete list',async()=>{
  const f=fixture();f.reject();const r=await fillCart(makeIntent(),f.adapter,f.storage);
@@ -76,5 +76,5 @@ test('a transfer receipt without exact main-bag quantities stays unconfirmed and
  f.adapter.transfer=async cart=>{await transfer(cart);f.main.lineItems.find(l=>l.productVariant.sku==='300121').quantity--;return structuredClone(f.main);};
  await assert.rejects(fillCart(intent,f.adapter,f.storage),/exact transferred quantities/);
  const journal=await f.storage.get(intent.id);assert.equal(journal.result.items[0].in_bag,0);
- await assert.rejects(fillCart(intent,f.adapter,f.storage),/transfer response was lost/);assert.equal(f.transfers,1);
+ await assert.rejects(fillCart(intent,f.adapter,f.storage),/bag transfer is unconfirmed/);assert.equal(f.transfers,1);
 });
