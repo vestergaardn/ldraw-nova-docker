@@ -154,7 +154,8 @@ def _reserve_name(slug):
     return settings.GENERATED_DIR / f'{slug}-v{version}.mpd'
 
 
-async def commit(snapshot, slug, quote, *, after, database=None):
+async def commit(snapshot, slug, quote, *, after, database=None, budget=None):
+    import budgets
     global _commit_lock
     if _commit_lock is None:
         _commit_lock = asyncio.Lock()
@@ -163,12 +164,13 @@ async def commit(snapshot, slug, quote, *, after, database=None):
         revision = hashlib.sha256(source).hexdigest()
         if revision != quote['revision'] or publication_problems(quote, after=after):
             raise ValueError('Stock verification failed or expired. Repair and check the draft again.')
+        assessment = budgets.require(budget, quote)
         target = _reserve_name(slug)
         checked = min(t for line in quote['lines'] for t in
                       (line['checked_at'], line.get('max_quantity_checked_at')) if t is not None)
-        record = dict(file=target.name, revision=revision, enforced=True, policy_version=1,
+        record = dict(file=target.name, revision=revision, enforced=True, policy_version=2,
                       verification_quote=quote['id'], checked_at=checked,
-                      expires_at=checked + PUBLICATION_MAX_AGE)
+                      expires_at=checked + PUBLICATION_MAX_AGE, budget_assessment=assessment)
         await asyncio.to_thread((database or Database()).save_publication, record, quote, after)
         # Persist privately before the visible rename. An interruption can leave
         # a receipt without a file, but never an approved file without evidence.
@@ -180,6 +182,7 @@ async def commit(snapshot, slug, quote, *, after, database=None):
             _owned(temporary, 0o644)
             if publication_problems(quote, after=after):
                 raise ValueError('Stock verification expired while saving. Check the draft again.')
+            budgets.require(budget, quote)
             temporary.replace(target)
         finally:
             temporary.unlink(missing_ok=True)

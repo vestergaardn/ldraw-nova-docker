@@ -31,7 +31,7 @@ def candidates(database=None):
         return rows
 
 
-def eligible(rows, *, quantity=1, color=None, library=None, now=None):
+def eligible(rows, *, quantity=1, color=None, library=None, now=None, max_unit_price=None):
     now = time.time() if now is None else now
     library = Path(library or settings.LDRAW_DIR)
     groups, metadata = {}, {}
@@ -44,6 +44,7 @@ def eligible(rows, *, quantity=1, color=None, library=None, now=None):
             continue
         element = CatalogueElement(**row['payload'])
         if (element.availability != 'available' or element.unit_price is None or element.max_quantity is None
+                or (max_unit_price is not None and element.unit_price > max_unit_price)
                 or quantity > element.max_quantity or not 0 <= now - element.checked_at <= MAX_AGE
                 or (element.max_quantity_checked_at is not None and not 0 <= now-element.max_quantity_checked_at<=MAX_AGE)):
             continue
@@ -57,7 +58,7 @@ def eligible(rows, *, quantity=1, color=None, library=None, now=None):
             continue
         group = groups.setdefault(part, dict(part=part, name=metadata[part], choices=[]))
         choice = dict(color=row['color'], color_name=colors.get(row['color'], row['color']), element_id=element.id,
-                      unit_price=element.unit_price, max_quantity=element.max_quantity,
+                      unit_price=element.unit_price, estimated_total=element.unit_price * quantity, max_quantity=element.max_quantity,
                       checked_at=element.checked_at, evidence=row['evidence'])
         if not any(c['color'] == choice['color'] and c['element_id'] == choice['element_id'] for c in group['choices']):
             group['choices'].append(choice)
@@ -107,12 +108,14 @@ def rank(groups, query, *, limit=12, key=None, runner=subprocess.run):
         return ids, 'keyword', reason
 
 
-def search(query, *, quantity=1, color=None, limit=12, database=None):
+def search(query, *, quantity=1, color=None, limit=12, max_unit_price=None, database=None):
     if not isinstance(query, str) or not query.strip() or len(query) > 1000:
         raise ValueError('Use a part role or part number, up to 1,000 characters')
     if type(quantity) is not int or quantity < 1 or type(limit) is not int or not 1 <= limit <= 40:
         raise ValueError('Use a positive required quantity and 1 to 40 results')
-    groups = eligible(candidates(database), quantity=quantity, color=color)
+    if max_unit_price is not None and (type(max_unit_price) is not int or max_unit_price < 0):
+        raise ValueError('Use a nonnegative maximum unit price in whole USD cents')
+    groups = eligible(candidates(database), quantity=quantity, color=color, max_unit_price=max_unit_price)
     ids, engine, fallback = rank(groups, query, limit=limit, key=environment_config.snapshot().get('TYPESAFE_API_KEY'))
     return dict(query=query, engine=engine, fallback_reason=fallback, eligible_parts=len(groups),
                 results=[groups[p] for p in ids], currency='USD', market='US',

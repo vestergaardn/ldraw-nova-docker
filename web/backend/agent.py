@@ -20,6 +20,7 @@ from typing import AsyncIterator, Awaitable, Callable, Optional
 import litellm
 
 import booklets
+import budgets
 import llm_config
 import browser_auth
 import inference
@@ -67,6 +68,7 @@ class Run:
     recoveries: int = 0
     stop_reason: Optional[str] = None
     starting: bool = False
+    budget: dict = field(default_factory=budgets.normalize)
 
     def record(self, status: str) -> None:
         if self.store is not None:
@@ -74,6 +76,7 @@ class Run:
                 "turn_id": self.turn_id, "status": status, "llm_model_id": self.entry_id,
                 "options": self.options, "started_at": self.started_at,
                 "steps": self.steps, "recoveries": self.recoveries,
+                "budget": self.budget,
             })
 
     def emit(self, event: str, data: dict) -> None:
@@ -150,6 +153,8 @@ def system_prompt(store: ChatStore, chat_id: str) -> str:
         with notes.open(errors="replace") as handle:
             prompt += "\n\nCurrent hand-over notes (workspace data):\n" + handle.read(16000)
     run = _runs.get(chat_id)
+    if run:
+        prompt += budgets.instruction(run.budget)
     if run and run.recoveries:
         prompt += ("\n\nThe server restarted during this request. Continue the original request from the saved history and files. "
                    "Inspect existing outputs before repeating an interrupted command. Do not replay completed tools. "
@@ -234,7 +239,8 @@ def llm_history(messages: list[dict], vision: bool, resolve: Callable[[str], Pat
 
 
 async def start_turn(store: ChatStore, chat_id: str, text: str, llm_model_id: Optional[str],
-                     options: dict | None = None, images: list[str] | None = None, documents: list | None = None) -> None:
+                     options: dict | None = None, images: list[str] | None = None, documents: list | None = None,
+                     budget=budgets.UNSET) -> None:
     if _shutting_down:
         raise RuntimeError("The server is restarting. Try again shortly.")
     if is_running(chat_id):
@@ -263,17 +269,22 @@ async def start_turn(store: ChatStore, chat_id: str, text: str, llm_model_id: Op
         raise RuntimeError("this chat is already running a turn")
 
     chat = store.get_chat(chat_id)
+    selected_budget = budgets.normalize(chat.get('budget') if budget is budgets.UNSET else budget)
+    if selected_budget['status'] == 'pending' and options['mode'] == 'agent' and options['permissions'] != 'read_only':
+        # Old clients have no budget dialog; omission retains their unlimited behavior.
+        selected_budget = budgets.normalize()
     if chat["title"] == "New chat":
         title = " ".join(text.split())
         store.update_chat(chat_id, title=title[:60] + ("…" if len(title) > 60 else ""))
-    store.update_chat(chat_id, llm_model_id=entry["id"], options=options)
+    store.update_chat(chat_id, llm_model_id=entry["id"], options=options, budget=selected_budget)
     content = ([{"type": "text", "text": text}, *[{"type": "image_url", "image_url": {"url": u}} for u in images]]
                if images else text)
     from attachments import save_documents
     attached = save_documents(store, chat_id, documents or [])
-    store.add_message(chat_id, {"role": "user", "content": content, **({"_documents": attached} if attached else {})})
+    store.add_message(chat_id, {"role": "user", "content": content, "_budget": selected_budget,
+                               **({"_documents": attached} if attached else {})})
 
-    run = Run(chat_id, store=store, entry_id=entry["id"])
+    run = Run(chat_id, store=store, entry_id=entry["id"], budget=selected_budget)
     _runs[chat_id] = run
     run.draft, run.tools_running = "", {}
     run.options, run.approvals = options, {}
@@ -317,7 +328,7 @@ async def recover(store: ChatStore) -> None:
             options = model_catalog.validate_options(entry, state["options"])
             run = Run(chat_id, store=store, turn_id=state["turn_id"], entry_id=entry["id"], options=options,
                       started_at=state["started_at"], steps=state.get("steps", 0),
-                      recoveries=state.get("recoveries", 0) + 1)
+                      recoveries=state.get("recoveries", 0) + 1, budget=budgets.normalize(state.get('budget')))
             messages = [m for m in store.messages(chat_id) if m.get("_turn_id") == run.turn_id
                         and not m.get("_ui_only") and not m.get("_partial")]
             if messages and messages[-1].get("_final_answer"):
@@ -328,7 +339,7 @@ async def recover(store: ChatStore) -> None:
             if run.recoveries > MAX_RECOVERIES:
                 raise ValueError("The build paused after repeated server interruptions. Send a message to continue from the saved work.")
             if run.steps >= MAX_STEPS:
-                raise ValueError(f"Stopped after {MAX_STEPS} steps. Send a message to continue.")
+                raise ValueError(f"Stopped after {MAX_STEPS} steps. {budgets.continuation(run.budget)}")
             _runs[chat_id] = run
             store.add_message(chat_id, {"role": "assistant", "_ui_only": True, "_notice": True,
                                        "content": "The server restarted. Resuming your saved build."})
@@ -409,7 +420,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
     caps = llm_config.capabilities(entry)
     vision = caps["vision"] is True
     use_tools = caps["tools"] is not False and run.options.get("mode") != "chat"
-    ctx = ToolContext(chat_id=chat_id, store=store, emit=run.emit)
+    ctx = ToolContext(chat_id=chat_id, store=store, emit=run.emit, budget=run.budget)
 
     def save(message: dict) -> int:
         msg_id = store.add_message(chat_id, {**message, "_turn_id": run.turn_id})
@@ -507,7 +518,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         else:
             status = "limited"
             save({"role": "assistant", "_ui_only": True, "_notice": True,
-                  "content": f"Stopped after {MAX_STEPS} steps. Send a message to continue."})
+                  "content": f"Stopped after {MAX_STEPS} steps. {budgets.continuation(run.budget)}"})
     except asyncio.CancelledError:
         stopped = True
         status = "stopped" if run.stop_reason == "user" else "interrupted"

@@ -14,6 +14,7 @@ from claude_agent_sdk import (
 )
 
 import browser_auth
+import budgets
 import inference
 import llm_config
 import model_catalog
@@ -23,7 +24,7 @@ from tools import ToolContext
 async def run_claude(store, run, entry, save, execute, prompt, use_tools):
     from agent import MAX_STEPS, available_tools, checkpoint, llm_history, mode_prompt
 
-    ctx = ToolContext(chat_id=run.chat_id, store=store, emit=run.emit)
+    ctx = ToolContext(chat_id=run.chat_id, store=store, emit=run.emit, budget=run.budget)
     sdk_tools = []
     for schema in available_tools(run.options) if use_tools else []:
         fn = schema["function"]
@@ -115,4 +116,6 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
                     run.draft = ""
                 await checkpoint()
             elif isinstance(event, ResultMessage) and event.is_error:
+                if event.subtype == 'error_max_turns' or event.terminal_reason == 'max_turns':
+                    raise ValueError(f'Stopped after the work limit. {budgets.continuation(run.budget)}')
                 raise RuntimeError("Claude runtime could not complete the turn")

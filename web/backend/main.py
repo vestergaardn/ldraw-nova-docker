@@ -30,6 +30,7 @@ from starlette.background import BackgroundTask
 
 import agent
 import booklets
+import budgets
 import gallery
 import glb
 import llm_config
@@ -300,11 +301,13 @@ def llm_provider_models(provider: str):
 
 class NewChat(BaseModel):
     llm_model_id: Optional[str] = None
+    budget: dict[str, Any] | None = None
 
 
 class ChatPatch(BaseModel):
     title: Optional[str] = None
     llm_model_id: Optional[str] = None
+    budget: dict[str, Any] | None = None
 
 
 class NewMessage(BaseModel):
@@ -313,6 +316,7 @@ class NewMessage(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
     images: list[str] = Field(default_factory=list, max_length=4)
     documents: list[dict[str, Any]] = Field(default_factory=list, max_length=4)
+    budget: dict[str, Any] | None = None
 
 
 # --- model helpers -------------------------------------------------------------
@@ -376,6 +380,7 @@ def model_info(path: Path) -> dict:
         "status": status, "error": error, "bom_status": bom_status, "bom_error": bom_error,
         "quote": pricing.summary(path) if exists else None,
         "build_availability": publications.availability(path) if exists else None,
+        "budget_assessment": (publications.record_for(path) or {}).get('budget_assessment') if exists and not in_gallery else None,
         "guide_id": booklets.prepared(path) if exists and not in_gallery else None,
     }
 
@@ -421,7 +426,11 @@ def chats_list():
 
 @app.post("/api/chats")
 def chats_create(body: NewChat):
-    return get_store().create_chat(llm_model_id=body.llm_model_id)
+    try:
+        return get_store().create_chat(llm_model_id=body.llm_model_id,
+                                      budget=body.budget if 'budget' in body.model_fields_set else budgets.UNSET)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 @app.get("/api/chats/{chat_id}")
@@ -448,10 +457,18 @@ async def chats_get(chat_id: str):
 
 
 @app.patch("/api/chats/{chat_id}")
-def chats_patch(chat_id: str, body: ChatPatch):
+async def chats_patch(chat_id: str, body: ChatPatch):
     store = get_store()
     store.get_chat(chat_id) or _not_found("no such chat")
-    store.update_chat(chat_id, **body.model_dump(exclude_none=True))
+    if 'budget' in body.model_fields_set and agent.is_running(chat_id):
+        raise HTTPException(409, 'Wait until the build stops before changing its budget.')
+    fields = body.model_dump(exclude_none=True)
+    if 'budget' in body.model_fields_set:
+        fields['budget'] = body.budget
+    try:
+        store.update_chat(chat_id, **fields)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     return store.get_chat(chat_id)
 
 
@@ -475,7 +492,8 @@ async def chats_send(chat_id: str, body: NewMessage):
     try:
         images = validate_images(body.images)
         documents = validate_documents(body.documents, images)
-        await agent.start_turn(store, chat_id, body.text, body.llm_model_id, body.options, images, documents)
+        await agent.start_turn(store, chat_id, body.text, body.llm_model_id, body.options, images, documents,
+                               budget=body.budget if 'budget' in body.model_fields_set else budgets.UNSET)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from None
     except ValueError as exc:

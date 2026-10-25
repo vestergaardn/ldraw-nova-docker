@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
-import type { TurnOptions, DocumentUpload } from "../api";
+import type { TurnOptions, DocumentUpload, BuildBudget } from "../api";
 import ModelPicker from "./ModelPicker";
 import { rememberModel, tokenLabel } from "../modelChoices";
 import DocumentIcon from "./DocumentIcon";
+import BudgetDialog from './BudgetDialog';
+import { budgetChoice, money, needsBudget } from '../budget';
 
 const DOCUMENT_TYPES = ".pdf,.txt,.md,.csv,.json,.yaml,.yml,.xml,.html,.rtf,.docx,.xlsx,.pptx,.mpd,.ldr,.dat";
 
-export default function Composer({ llmId, onLlmChange, onSend, onStop, running, autoFocus, initialText = "", initialOptions }: {
+export default function Composer({ llmId, onLlmChange, onSend, onStop, running, autoFocus, initialText = "", initialOptions, budget = budgetChoice(null, true), onBudgetChange }: {
   llmId: string | null;
   onLlmChange: (id: string) => void;
-  onSend: (text: string, options: TurnOptions, images: string[], documents: DocumentUpload[]) => Promise<void> | void;
+  onSend: (text: string, options: TurnOptions, images: string[], documents: DocumentUpload[], budget: BuildBudget) => Promise<void> | void;
+  budget?: BuildBudget;
+  onBudgetChange?: (budget: BuildBudget) => Promise<void> | void;
   onStop?: () => void;
   running: boolean;
   autoFocus?: boolean;
@@ -29,9 +33,13 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
   const [images, setImages] = useState<{ name: string; url: string; size: number }[]>([]);
   const [documents, setDocuments] = useState<(DocumentUpload & { size: number })[]>([]);
   const [error, setError] = useState("");
+  const [budgetDialog, setBudgetDialog] = useState<'start' | 'edit' | null>(null);
+  const resolveBudget = useRef<((budget: BuildBudget | null) => void) | null>(null);
+  const submitLock = useRef(false);
+  useEffect(() => () => { resolveBudget.current?.(null); }, []);
   const model = llms.find(m => m.id === llmId);
   const profile = model?.profile;
-  const disabled = running || busy;
+  const disabled = running || busy || budgetDialog !== null;
   // Resolve synchronously so a quick model switch + Send cannot submit the
   // previous provider's effort/context while waiting for an effect to run.
   const sameModel = selection.modelId === llmId;
@@ -57,14 +65,33 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
   async function submit(e?: FormEvent) {
     e?.preventDefault();
     const value = text.trim();
-    if (!value || disabled || !model) return;
-    setBusy(true);
+    if (!value || disabled || !model || submitLock.current) return;
+    submitLock.current = true; setBusy(true);
     try {
       setError("");
-      await onSend(value, options, images.map(i => i.url), documents.map(({ name, data }) => ({ name, data })));
+      let choice: BuildBudget | null = budget;
+      if (needsBudget(budget, options)) {
+        choice = await new Promise<BuildBudget | null>(resolve => { resolveBudget.current = resolve; setBudgetDialog('start'); });
+      }
+      if (choice === null) return;
+      await onSend(value, options, images.map(i => i.url), documents.map(({ name, data }) => ({ name, data })), choice);
       rememberModel(model.id);
       setText(""); setImages([]); setDocuments([]);
     } catch (e) { setError((e as Error).message); }
+    finally { submitLock.current = false; setBusy(false); }
+  }
+  function closeBudget() {
+    resolveBudget.current?.(null); resolveBudget.current = null; setBudgetDialog(null);
+  }
+  async function chooseBudget(choice: BuildBudget) {
+    if (budgetDialog === 'start') { resolveBudget.current?.(choice); resolveBudget.current = null; }
+    else await onBudgetChange?.(choice);
+    setBudgetDialog(null);
+  }
+  async function removeBudget() {
+    setBusy(true); setError('');
+    try { await onBudgetChange?.(budgetChoice(null)); }
+    catch (cause) { setError((cause as Error).message); }
     finally { setBusy(false); }
   }
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -106,6 +133,8 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
   const effortNames: Record<string, string> = { none: "No reasoning", low: "Low", medium: "Medium", high: "High", xhigh: "XHigh", max: "Max" };
 
   return <form className="composer" onSubmit={submit}>
+    {budgetDialog && <BudgetDialog initial={budget} starting={budgetDialog === 'start'} onChoose={chooseBudget}
+      onCancel={closeBudget} returnFocus={() => ref.current?.focus()} />}
     {!llms.length && <div className="composer-notice">No model configured yet. <Link to="/settings">Add a model in Settings</Link> to start building.</div>}
     <div className="composer-input">
       <button type="button" className="attach-button" aria-label="Attach images" title="Attach images (up to 4)" disabled={disabled || !model} onClick={() => upload.current?.click()}>
@@ -134,6 +163,13 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
       <DocumentIcon /><span>{doc.name}</span><button type="button" className="icon-button" aria-label={`Remove ${doc.name}`} disabled={disabled} onClick={() => setDocuments(documents.filter((_, i) => i !== index))}>✕</button>
     </div>)}</div>}
     {error && <div className="banner error" role="alert">{error}</div>}
+    <div className="composer-budget">
+      <span>{budget.status === 'set' ? `Parts budget ${money(budget.amount_cents!)} · up to ${money(budget.maximum_cents!)}` :
+        budget.status === 'pending' ? 'Choose a parts budget before building' : 'No parts budget'}</span>
+      {onBudgetChange && <><button type="button" disabled={disabled} onClick={() => setBudgetDialog('edit')}>
+        {budget.status === 'set' ? 'Change budget' : 'Set budget'}</button>
+        {budget.status === 'set' && <button type="button" disabled={disabled} onClick={removeBudget}>Remove budget</button>}</>}
+    </div>
     <div className="composer-toolbar">
       <div className="turn-options">
         <ModelPicker value={llmId} onChange={chooseModel} disabled={disabled || !llms.length} />

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import settings
+import budgets
 
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
@@ -64,14 +65,15 @@ class ChatStore:
 
     # --- chats -------------------------------------------------------------
 
-    def create_chat(self, title: str = "New chat", llm_model_id: Optional[str] = None) -> dict:
+    def create_chat(self, title: str = "New chat", llm_model_id: Optional[str] = None, budget=budgets.UNSET) -> dict:
+        budget = budgets.normalize(default='pending') if budget is budgets.UNSET else budgets.normalize(budget)
         with self._lock:
             chat_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
             now = time.time()
             self.chat_dir(chat_id).mkdir(parents=True)
             self.work_dir(chat_id).mkdir(parents=True, exist_ok=True)
             chat = {"id": chat_id, "title": title, "llm_model_id": llm_model_id,
-                    "created_at": now, "updated_at": now}
+                    "created_at": now, "updated_at": now, "budget": budget}
             self._write_chat(chat)
             return chat
 
@@ -79,7 +81,9 @@ class ChatStore:
         if not self.valid_id(chat_id):
             return None
         try:
-            return json.loads((self.chat_dir(chat_id) / "chat.json").read_text())
+            chat = json.loads((self.chat_dir(chat_id) / "chat.json").read_text())
+            chat['budget'] = budgets.normalize(chat.get('budget'))
+            return chat
         except (FileNotFoundError, json.JSONDecodeError):
             return None
 
@@ -94,7 +98,9 @@ class ChatStore:
             chat = self.get_chat(chat_id)
             if chat is None:
                 return
-            chat.update({k: v for k, v in fields.items() if k in ("title", "llm_model_id", "options")})
+            if 'budget' in fields:
+                fields['budget'] = budgets.normalize(fields['budget'])
+            chat.update({k: v for k, v in fields.items() if k in ("title", "llm_model_id", "options", "budget")})
             chat["updated_at"] = time.time()
             self._write_chat(chat)
 

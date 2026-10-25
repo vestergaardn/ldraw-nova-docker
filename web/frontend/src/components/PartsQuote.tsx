@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type ModelQuote, type QuoteSummary, type BuildAvailability, timeAgo } from '../api';
+import { api, type ModelQuote, type QuoteSummary, type BuildAvailability, type BudgetAssessment, timeAgo } from '../api';
 import BuildAvailabilityBadge from './BuildAvailabilityBadge';
+import BudgetSummary from './BudgetSummary';
 
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value / 100);
 const labels = { available: 'Available', out_of_stock: 'Out of stock', unlisted: 'Not listed', unmapped: 'Needs a match' };
 
-export default function PartsQuote({ modelUrl, initial, availability }: { modelUrl: string; initial?: QuoteSummary | null; availability?: BuildAvailability | null }) {
+export default function PartsQuote({ modelUrl, initial, availability, budget }: { modelUrl: string; initial?: QuoteSummary | null; availability?: BuildAvailability | null; budget?: BudgetAssessment | null }) {
   const [summary, setSummary] = useState(initial);
   const [open, setOpen] = useState(false);
   const [quote, setQuote] = useState<ModelQuote | null>(null);
@@ -97,6 +98,7 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
   const ready = quote && !quote.stale && now < Math.min(quote.created_at + 600, quote.build_availability?.expires_at ?? Infinity);
   return <div className="parts-quote">
     <BuildAvailabilityBadge value={(summary && 'build_availability' in summary ? summary.build_availability : null) ?? availability} />
+    <BudgetSummary assessment={budget} quote={summary} />
     <div className="quote-summary">
       <strong>{priced ? (priced.priced_quantity ? money(priced.subtotal ?? priced.known_subtotal) : 'Price unavailable') : 'Parts pricing'}</strong>
       <span className="muted small">{priced ? `${priced.subtotal === null ? 'Known prices · ' : ''}Last check: ${priced.purchasable_quantity}/${priced.total_quantity} pieces available · ${priced.unresolved_lines} rows need review` : 'US LEGO Pick a Brick · USD'}</span>
@@ -107,6 +109,7 @@ export default function PartsQuote({ modelUrl, initial, availability }: { modelU
     {open && createPortal(<dialog ref={dialog} className="parts-dialog" aria-labelledby="parts-title" onCancel={() => setOpen(false)}>
       <header className="modal-head"><strong id="parts-title">Parts and cost</strong><button className="icon-button" aria-label="Close parts review" onClick={() => setOpen(false)}>×</button></header>
       <div className="parts-review">
+        <BudgetSummary assessment={budget} quote={quote} />
         {quote && <>
           {!complete && <label className="available-choice"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} /> Add only verified, available pieces. Keep all other pieces unresolved.</label>}
           <p className="muted small">Identity data: <a href="https://rebrickable.com/downloads/" target="_blank" rel="noreferrer">Rebrickable</a>. Prices and stock: LEGO US. Saved models and cart requests never change parts automatically.</p>

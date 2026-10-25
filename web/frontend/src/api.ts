@@ -17,6 +17,16 @@ export type QuoteLine = {
   max_quantity_source?: string | null;
   alternatives: { part: string; element_id: string; unit_price: number | null; relationship: string; requires_model_review: boolean }[];
 };
+export type BuildBudget = {
+  status: 'pending' | 'skipped' | 'set'; amount_cents: number | null; maximum_cents: number | null;
+  currency: 'USD'; basis: 'parts'; allowance_percent: 5;
+};
+export type BudgetAssessment = {
+  budget: BuildBudget; status: 'unbudgeted' | 'unknown' | 'within_budget' | 'within_allowance' | 'over_budget';
+  subtotal: number | null; remaining_cents: number | null; remaining_allowance_cents: number | null;
+  excess_cents: number | null; revision: string; verification_quote: string; checked_at: number | null;
+  largest_costs: { part: string; color: string; name: string; quantity: number; unit_price: number; line_total: number }[];
+};
 export type ModelQuote = {
   id: string; revision: string; currency: 'USD'; created_at: number; checked_at?: number | null; refreshing?: boolean; lines: QuoteLine[];
   known_subtotal: number; subtotal: number | null; total_quantity: number; priced_quantity: number;
@@ -57,6 +67,7 @@ export type ModelFile = {
   quote?: QuoteSummary | null;
   build_availability?: BuildAvailability | null;
   guide_id?: string | null; // assembly guide started after the build, with default options
+  budget_assessment?: BudgetAssessment | null;
 };
 
 /** A model a chat produced: a reference into data/generated. */
@@ -71,6 +82,7 @@ export type Chat = {
   running?: boolean;
   options?: TurnOptions;
   models?: ChatModel[];
+  budget?: BuildBudget;
 };
 
 export type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
@@ -157,14 +169,16 @@ export const api = {
   checkEnvironment: (name: string, id?: string) => request<{ preconfigured: boolean; saved: boolean }>(`/api/environment/check?name=${encodeURIComponent(name)}&exclude_id=${encodeURIComponent(id ?? "")}`),
   saveEnvironment: (variables: EnvironmentUpdate[]) => request<{ variables: EnvironmentVariable[] }>("/api/environment", { method: "PUT", body: json({ variables }) }),
   chats: () => request<{ chats: Chat[] }>("/api/chats"),
-  createChat: (llm_model_id?: string | null) =>
-    request<Chat>("/api/chats", { method: "POST", body: json({ llm_model_id }) }),
+  createChat: (llm_model_id?: string | null, budget?: BuildBudget) =>
+    request<Chat>("/api/chats", { method: "POST", body: json({ llm_model_id, budget }) }),
   chat: (id: string) => request<ChatDetail>(`/api/chats/${id}`),
   renameChat: (id: string, title: string) =>
     request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: json({ title }) }),
+  updateBudget: (id: string, budget: BuildBudget) =>
+    request<Chat>(`/api/chats/${id}`, { method: "PATCH", body: json({ budget }) }),
   deleteChat: (id: string) => request(`/api/chats/${id}`, { method: "DELETE" }),
-  send: (id: string, text: string, llm_model_id?: string | null, options?: TurnOptions, images?: string[], documents?: DocumentUpload[]) =>
-    request(`/api/chats/${id}/messages`, { method: "POST", body: json({ text, llm_model_id, options, images, documents }) }),
+  send: (id: string, text: string, llm_model_id?: string | null, options?: TurnOptions, images?: string[], documents?: DocumentUpload[], budget?: BuildBudget) =>
+    request(`/api/chats/${id}/messages`, { method: "POST", body: json({ text, llm_model_id, options, images, documents, budget }) }),
   approve: (id: string, approval: string, approved: boolean) => request(`/api/chats/${id}/approvals/${approval}`, { method: "POST", body: json({ approved }) }),
   catalog: () => request<{ models: ModelProfile[] }>("/api/model-catalog"),
   authStatus: (provider: string) => request<AuthStatus>(`/api/auth/${provider}`),

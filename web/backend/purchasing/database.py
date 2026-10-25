@@ -226,8 +226,13 @@ class Database:
             return [row['evidence'] for row in db.execute('select evidence from lego.model_publications')]
 
     def save_publication(self, record, quote, after):
+        import budgets
         if quote['revision'] != record['revision'] or publication_problems(quote, after=after):
             raise ValueError('The model no longer has complete, fresh purchasing evidence')
+        if record.get('policy_version', 1) >= 2:
+            assessment = record.get('budget_assessment')
+            if not assessment or assessment != budgets.require(assessment['budget'], quote):
+                raise ValueError('The saved budget assessment does not match the verified quote')
         with self.connection() as db:
             # The quote is already immutable and persisted. Check expiry using
             # database time too; a delayed transaction must not approve stale data.

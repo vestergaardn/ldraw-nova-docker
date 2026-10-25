@@ -245,6 +245,22 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .composer select.compact-control { field-sizing: content; }
 .composer .compact-control:hover { border-color: var(--border); }
 .composer .model-picker-trigger { max-width: 215px; font-weight: 550; padding-left: 9px; }
+.composer-budget { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; padding: 4px 0 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.composer-budget > span { color: var(--muted); flex: 1 1 230px; }
+.composer-budget button { min-height: 44px; padding: 6px 10px; font-size: 12px; }
+.budget-dialog { width: min(480px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; padding: 24px; color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+.budget-dialog::backdrop { background: rgb(0 0 0 / 60%); }
+.budget-dialog h2 { margin: 0 0 10px; font-size: 22px; }
+.budget-dialog label { display: block; margin: 20px 0 6px; font-weight: 600; }
+.budget-input { position: relative; }
+.budget-input > span { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--muted); }
+.budget-input input { width: 100%; font-size: 18px; min-height: 48px; padding-left: 30px; font-variant-numeric: tabular-nums; }
+.budget-limit { min-height: 1.5em; font-weight: 600; font-variant-numeric: tabular-nums; }
+.budget-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.budget-actions button { min-height: 44px; justify-content: center; }
+.budget-dialog :focus-visible, .composer-budget button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.budget-summary { display: grid; gap: 4px; margin-block: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) { .budget-dialog { padding: 20px; } .budget-actions button { flex: 1 1 auto; } .budget-actions .primary { flex-basis: 100%; } }
 .chevron { color: var(--muted); margin-left: 4px; }
 .model-picker-panel { position: fixed; z-index: 60; display: flex; flex-direction: column; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgb(0 0 0 / .18); }
 .model-picker-panel > input { flex: none; font-size: 13px; margin-bottom: 6px; }

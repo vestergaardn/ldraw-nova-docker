@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type TurnOptions, type DocumentUpload } from "../api";
+import { api, type TurnOptions, type DocumentUpload, type BuildBudget } from "../api";
+import { budgetChoice } from '../budget';
 import Composer from "../components/Composer";
 import { useApp } from "../context";
 
@@ -17,16 +18,18 @@ export default function Home() {
   const [llmId, setLlmId] = useState<string | null>(defaultLlmId);
   const [example, setExample] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [budget, setBudget] = useState<BuildBudget>(() => budgetChoice(null, true));
 
   useEffect(() => {
     if (!llmId || !llms.some((m) => m.id === llmId)) setLlmId(defaultLlmId ?? llms[0]?.id ?? null);
   }, [llms, defaultLlmId, llmId]);
 
-  async function start(text: string, options: TurnOptions, images: string[], documents: DocumentUpload[]) {
+  async function start(text: string, options: TurnOptions, images: string[], documents: DocumentUpload[], choice: BuildBudget) {
     setError(null);
     try {
-      const chat = await api.createChat(llmId);
-      await api.send(chat.id, text, llmId, options, images, documents);
+      setBudget(choice);
+      const chat = await api.createChat(llmId, choice);
+      await api.send(chat.id, text, llmId, options, images, documents, choice);
       refreshChats();
       navigate(`/chat/${chat.id}`);
     } catch (e) {
@@ -59,6 +62,8 @@ export default function Home() {
         running={false}
         autoFocus
         initialText={example}
+        budget={budget}
+        onBudgetChange={setBudget}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { api, isPending, type ChatDetail, type ChatModel, type Message, type Approval, type TurnOptions, type DocumentUpload } from "../api";
+import { api, isPending, type ChatDetail, type ChatModel, type Message, type Approval, type TurnOptions, type DocumentUpload, type BuildBudget } from "../api";
+import { budgetChoice } from '../budget';
 import Composer from "../components/Composer";
 import Markdown from "../components/Markdown";
 import ToolCard from "../components/ToolCard";
@@ -172,11 +173,11 @@ export default function ChatPage() {
     if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }
 
-  async function send(value: string, options: TurnOptions, images: string[], documents: DocumentUpload[]) {
+  async function send(value: string, options: TurnOptions, images: string[], documents: DocumentUpload[], budget: BuildBudget) {
     setError(null);
     stickToBottom.current = true;
     try {
-      await api.send(id, value, llmId, options, images, documents);
+      await api.send(id, value, llmId, options, images, documents, budget);
     } catch (e) {
       setError((e as Error).message);
       throw e;
@@ -288,6 +289,8 @@ export default function ChatPage() {
           onSend={send}
           onStop={() => api.cancel(id)}
           running={running}
+          budget={detail.chat.budget ?? budgetChoice(null)}
+          onBudgetChange={async budget => { await api.updateBudget(id, budget); await reload(); refreshChats(); }}
         />
       </div>
     </div>

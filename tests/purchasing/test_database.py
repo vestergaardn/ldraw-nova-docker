@@ -124,3 +124,27 @@ def test_candidate_query_excludes_ambiguous_mappings_and_out_of_stock(db):
  assert any(r['part']=='3001' and r['color']=='4' and r['payload']['id']=='300121' for r in rows)
  db.observe({'300121':CatalogueElement('300121','3001','21','Brick','out_of_stock',21,time.time()+1,5)})
  assert not any(r['payload']['id']=='300121' for r in db.available_candidates())
+
+
+def test_budget_evidence_uses_same_immutable_quote_with_independent_limits(db):
+ import budgets
+ _,index,elements=seed(db);requirements=[PartRequirement('3001','4',2)]
+ q=build_quote(uuid.uuid4().hex*2,requirements,index,elements,strict=True,max_age=600)
+ db.save_quote(q,'budget-fixture.mpd',q['revision'],requirements)
+ records=[]
+ for amount in [40,100]:
+  budget=budgets.normalize({'status':'set','amount_cents':amount})
+  record=dict(file=uuid.uuid4().hex+'.mpd',revision=q['revision'],enforced=True,policy_version=2,
+              checked_at=q['checked_at'],expires_at=q['checked_at']+600,verification_quote=q['id'],
+              budget_assessment=budgets.require(budget,q))
+  db.save_publication(record,q,q['checked_at']-1);records.append(record)
+ with db.connection() as c:
+  saved=[c.execute('select evidence from lego.model_publications where model_path=%s',(r['file'],)).fetchone()['evidence'] for r in records]
+  assert saved==records
+  assert [r['budget_assessment']['status'] for r in saved]==['within_allowance','within_budget']
+  assert c.execute('select payload from lego.model_quotes where id=%s',(q['id'],)).fetchone()['payload']==q
+ invalid={**records[0],'file':uuid.uuid4().hex+'.mpd',
+          'budget_assessment':budgets.assess({'status':'set','amount_cents':39},q)}
+ with pytest.raises(ValueError,match='budget'):db.save_publication(invalid,q,q['checked_at']-1)
+ invalid['budget_assessment']={**records[0]['budget_assessment'],'subtotal':1}
+ with pytest.raises(ValueError,match='budget'):db.save_publication(invalid,q,q['checked_at']-1)

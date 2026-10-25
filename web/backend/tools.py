@@ -25,6 +25,7 @@ import settings
 import toolkit
 import environment_config
 import gallery
+import budgets
 from leocad_render import bom_path_for, list_models, snapshot_path_for
 from paths import safe_join
 from store import ChatStore
@@ -41,6 +42,7 @@ class ToolContext:
     chat_id: str
     store: ChatStore
     emit: Callable[[str, dict], None]
+    budget: dict = field(default_factory=budgets.normalize)
 
     @property
     def work_dir(self) -> Path:
@@ -194,7 +196,7 @@ async def t_check_build_parts(ctx: ToolContext, path: str, refresh: bool = False
     try:
         _, snapshot = _draft_snapshot(ctx, path)
         quote_data, problems = await availability.check(snapshot, refresh=refresh)
-        result = availability.feedback(quote_data, problems)
+        result = _build_feedback(ctx, quote_data, problems)
         if problems:
             from purchasing import discovery
             result['available_alternatives'] = await asyncio.to_thread(discovery.alternatives, problems)
@@ -205,12 +207,26 @@ async def t_check_build_parts(ctx: ToolContext, path: str, refresh: bool = False
                                   'next_action': 'Repair the draft or retry check_build_parts. Do not deliver a model download.'})
 
 
+def _build_feedback(ctx, quote, problems):
+    from purchasing import availability
+    assessment = budgets.assess(ctx.budget, quote)
+    budget_problems = budgets.problems(assessment)
+    result = availability.feedback(quote, [*problems, *budget_problems])
+    result['budget_assessment'] = assessment
+    if budget_problems:
+        ctx.emit('progress', {'summary': 'Adjusting the build to fit the parts budget.'})
+        result['next_action'] = ('Compare the largest costs, search cheaper available colours or parts, and redesign expensive assemblies. '
+                                 'Check the repaired draft again. Preserve the requested concept and defining features.')
+    return result
+
+
 async def t_search_available_parts(ctx: ToolContext, query: str, quantity: int = 1,
-                                   color: str | None = None, limit: int = 12) -> ToolResult:
+                                   color: str | None = None, limit: int = 12, max_unit_price: int | None = None) -> ToolResult:
     from purchasing import discovery
     ctx.emit('progress', {'summary': 'Finding verified parts and colours in LEGO’s US catalogue.'})
     try:
-        result = await asyncio.to_thread(discovery.search, query, quantity=quantity, color=color, limit=limit)
+        result = await asyncio.to_thread(discovery.search, query, quantity=quantity, color=color, limit=limit,
+                                        max_unit_price=max_unit_price)
         return ToolResult(json.dumps(result, indent=2))
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ValueError) else 'The parts catalogue is unavailable. Keep the draft and retry later.'
@@ -231,7 +247,10 @@ async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) 
             quote_data, problems = await availability.check(snapshot, refresh=True)
         if problems:
             ctx.emit('progress', {'summary': 'Replacing unavailable parts. The draft needs changes before completion.'})
-            return _stock_result(ctx, {'published': False, **availability.feedback(quote_data, problems)})
+            return _stock_result(ctx, {'published': False, **_build_feedback(ctx, quote_data, problems)})
+        feedback = _build_feedback(ctx, quote_data, [])
+        if feedback['problem_count']:
+            return _stock_result(ctx, {'published': False, **feedback})
         review = snapshot.parent / 'review-v1'
         review.mkdir(exist_ok=True)
         publications._owned(review, 0o755)
@@ -254,10 +273,11 @@ async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) 
         after = time.time()
         quote_data, problems = await availability.check(snapshot, refresh=True, final=True)
         problems = problems or publication_problems(quote_data, after=after)
-        if problems:
-            ctx.emit('progress', {'summary': 'Stock changed. Repairing the draft before completion.'})
-            return _stock_result(ctx, {'published': False, **availability.feedback(quote_data, problems)})
-        target, receipt = await publications.commit(snapshot, _slug(name or source.stem), quote_data, after=after)
+        feedback = _build_feedback(ctx, quote_data, problems)
+        if feedback['problem_count']:
+            ctx.emit('progress', {'summary': 'Prices or stock changed. Repairing the draft before completion.'})
+            return _stock_result(ctx, {'published': False, **feedback})
+        target, receipt = await publications.commit(snapshot, _slug(name or source.stem), quote_data, after=after, budget=ctx.budget)
     except Exception as exc:
         # Do not expose connection strings or provider errors to the agent/browser.
         reason = str(exc) if isinstance(exc, (ValueError, ToolError)) else 'The parts service is unavailable. The draft and completed renders are saved.'
@@ -283,6 +303,7 @@ async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) 
               'download_url': model_url + '?download=1', 'sha256': revision,
               'build_availability': {'status': 'available', **receipt},
               'verification_quote': quote_data['id'], 'coverage': 1.0,
+              'budget_assessment': receipt['budget_assessment'],
               'validation': artifact_url(ctx, public_review / report.name), 'checks_passed': True,
               'validation_path': str(public_review / report.name),
               'preview': artifact_url(ctx, public_review / image.name), 'preview_path': str(public_review / image.name),
@@ -353,11 +374,13 @@ TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
         "Library search and example models do not prove shop availability.",
         {"query": {"type": "string"}, "quantity": {"type": "integer", "description": "Required quantity, default 1"},
          "color": {"type": "string", "description": "Optional exact LDraw colour code"},
+         "max_unit_price": {"type": "integer", "description": "Optional maximum price per piece in whole USD cents, before ranking"},
          "limit": {"type": "integer", "description": "Result count, 1 to 40, default 12"}},
         ["query"]), t_search_available_parts),
     "check_build_parts": (_fn("check_build_parts",
         "Check a saved draft’s complete physical parts and colours against the US LEGO catalogue. "
         "Use after substantial assemblies and before rendering. Repair every reported problem. "
+        "Returns the parts subtotal, remaining budget, excess cost and largest cost contributors. "
         "A passing draft check does not publish or reserve stock; publish_model checks again after rendering.",
         {"path": {"type": "string"}, "refresh": {"type": "boolean", "description": "Refresh selected elements from LEGO; default false uses current catalogue observations"}},
         ["path"]), t_check_build_parts),
