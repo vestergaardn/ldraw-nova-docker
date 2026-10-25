@@ -77,9 +77,9 @@ def _truncate(text: str) -> str:
 async def run(argv: list[str], cwd: Path, timeout: int, *,
               env_extra: dict[str, str] | None = None,
               on_output: Callable[[str, str], None] | None = None,
-              secrets: tuple[str, ...] = ()) -> RunResult:
+              secrets: tuple[str, ...] = (), trusted: bool = False) -> RunResult:
     cwd.mkdir(parents=True, exist_ok=True)
-    account = _agent_account()
+    account = None if trusted else _agent_account()
     home = Path(account.pw_dir) if account else cwd
     env = {
         "PATH": f"{SCRIPTS_DIR}:/usr/local/bin:/usr/bin:/bin",

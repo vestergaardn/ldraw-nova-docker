@@ -34,6 +34,48 @@ def offline_model_details(monkeypatch):
     monkeypatch.setattr(model_discovery, "_fetch_json", unavailable)
 
 
+@pytest.fixture(autouse=True)
+def offline_publication_database(monkeypatch):
+    import publications
+    class Offline:
+        def bootstrap_publications(self, _legacy): return []
+    monkeypatch.setattr(publications, 'Database', Offline)
+
+
+@pytest.fixture
+def legacy_model():
+    """Explicit historical receipt for old API fixtures, never automatic approval."""
+    import publications
+    from purchasing.service import revision_for
+    def register(path):
+        record=dict(file=path.name,revision=revision_for(path),enforced=False,
+                    verification_quote=None,checked_at=None,expires_at=None)
+        publications._atomic_json(publications._record_path(path.name),record)
+        return path
+    return register
+
+
+@pytest.fixture
+def bridge_shop(monkeypatch):
+    """Verified stock fixture for tests using the real five-piece bridge builder."""
+    import publications
+    import time
+    from purchasing import service
+    from purchasing.domain import CatalogueElement
+    from test_publications import Shop
+    shop=Shop()
+    shop.index.colors['1'].add('1');shop.index.lego_colors['1'].add('23')
+    for n,(part,color,lego) in enumerate([('3003','4','21'),('3003','1','23'),('3022','4','21'),('3022','1','23'),('3032','14','24')]):
+        element=str(900000+n)
+        shop.index.parts[part].add(part);shop.index.elements[part,color].add(element)
+        shop.elements[element]=CatalogueElement(element,part,lego,'Fixture part','available',21,time.time(),100)
+    monkeypatch.setattr(service,'Database',lambda:shop)
+    monkeypatch.setattr(service,'LegoCatalogue',lambda:shop)
+    monkeypatch.setattr(publications,'Database',lambda:shop)
+    publications.protect_collection()
+    return shop
+
+
 @pytest.fixture
 def data_dir() -> Path:
     return _tmp / "data"

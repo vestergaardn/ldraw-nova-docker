@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, type ModelQuote, type QuoteSummary, timeAgo } from '../api';
+import { api, type ModelQuote, type QuoteSummary, type BuildAvailability, timeAgo } from '../api';
+import BuildAvailabilityBadge from './BuildAvailabilityBadge';
 
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value / 100);
 const labels = { available: 'Available', out_of_stock: 'Out of stock', unlisted: 'Not listed', unmapped: 'Needs a match' };
 
-export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; initial?: QuoteSummary | null }) {
+export default function PartsQuote({ modelUrl, initial, availability }: { modelUrl: string; initial?: QuoteSummary | null; availability?: BuildAvailability | null }) {
   const [summary, setSummary] = useState(initial);
   const [open, setOpen] = useState(false);
   const [quote, setQuote] = useState<ModelQuote | null>(null);
@@ -15,10 +16,18 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
   const [cartStatus, setCartStatus] = useState('');
   const [cartItems, setCartItems] = useState<{elementId:string; requested:number; added:number; missing:number; in_bag:number}[]>([]);
   const [helper, setHelper] = useState(false);
+  const [now, setNow] = useState(() => Date.now() / 1000);
   const dialog = useRef<HTMLDialogElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const pending = useRef<string | null>(null);
   useEffect(() => setSummary(initial), [initial]);
+  useEffect(() => {
+    setNow(Date.now() / 1000);
+    if (!quote) return;
+    const expires = Math.min(quote.created_at + 600, quote.build_availability?.expires_at ?? Infinity);
+    const timer = setTimeout(() => setNow(Date.now() / 1000), Math.max(0, expires * 1000 - Date.now()) + 50);
+    return () => clearTimeout(timer);
+  }, [quote]);
   useEffect(() => {
     if (summary && 'id' in summary && !summary.stale && !summary.refreshing) return;
     let cancelled=false;
@@ -65,11 +74,12 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
   const importCount = quote ? new Set(quote.lines.filter(l => l.state==='available' && l.unit_price!==null && !l.issue && l.element_id).map(l=>l.element_id)).size : 0;
   const priced = summary && 'id' in summary ? summary : null;
   const complete = quote && quote.purchasable_quantity === quote.total_quantity;
-  const ready = quote && !quote.stale && Date.now() / 1000 - quote.created_at < 600;
+  const ready = quote && !quote.stale && now < Math.min(quote.created_at + 600, quote.build_availability?.expires_at ?? Infinity);
   return <div className="parts-quote">
+    <BuildAvailabilityBadge value={(summary && 'build_availability' in summary ? summary.build_availability : null) ?? availability} />
     <div className="quote-summary">
       <strong>{priced ? (priced.priced_quantity ? money(priced.subtotal ?? priced.known_subtotal) : 'Price unavailable') : 'Parts pricing'}</strong>
-      <span className="muted small">{priced ? `${priced.subtotal === null ? 'Known prices · ' : ''}${priced.purchasable_quantity}/${priced.total_quantity} pieces available · ${priced.unresolved_lines} rows need review` : 'US LEGO Pick a Brick · USD'}</span>
+      <span className="muted small">{priced ? `${priced.subtotal === null ? 'Known prices · ' : ''}Last check: ${priced.purchasable_quantity}/${priced.total_quantity} pieces available · ${priced.unresolved_lines} rows need review` : 'US LEGO Pick a Brick · USD'}</span>
       {priced && <span className="muted small">{priced.refreshing ? 'Updating prices…' : priced.stale ? 'Prices need an update' : priced.checked_at === null ? 'Prices need a match' : `Checked ${timeAgo(priced.checked_at ?? priced.created_at)}`}</span>}
       {priced && <span className="muted small">{priced.fees.length ? priced.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation'}</span>}
     </div>
@@ -79,7 +89,7 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
       <div className="parts-review">
         {quote && <>
           {!complete && <label className="available-choice"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} /> Add only verified, available pieces. Keep all other pieces unresolved.</label>}
-          <p className="muted small">Identity data: <a href="https://rebrickable.com/downloads/" target="_blank" rel="noreferrer">Rebrickable</a>. Prices and stock: LEGO US. No replacements apply automatically.</p>
+          <p className="muted small">Identity data: <a href="https://rebrickable.com/downloads/" target="_blank" rel="noreferrer">Rebrickable</a>. Prices and stock: LEGO US. Saved models and cart requests never change parts automatically.</p>
         </>}
         <div className="parts-actions">
           <button onClick={refresh} disabled={busy}>{busy && !pending.current ? 'Checking prices…' : 'Refresh prices'}</button>
@@ -98,7 +108,7 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
           <div className="parts-table-wrap"><table className="parts-table"><thead><tr><th>Part / colour</th><th>Quantity</th><th>Element</th><th>Price</th><th>Status</th></tr></thead><tbody>
             {quote.lines.map(line => <tr key={`${line.part}-${line.color}`}>
               <td><strong>{line.name || line.part}</strong><small>{line.part} · LDraw colour {line.color}</small></td>
-              <td>{line.quantity}</td><td>{line.element_id || 'Unresolved'}</td>
+              <td>{line.quantity}<small>Order limit: {line.max_quantity ?? 'Unknown'}</small></td><td>{line.element_id || 'Unresolved'}</td>
               <td>{line.line_total === null ? 'Unknown' : money(line.line_total)}</td>
               <td>{labels[line.state]}{line.stale && <small>Needs price refresh</small>}{line.issue && <small>{line.issue.replaceAll('_', ' ')}</small>}
                 {line.alternatives.map(a => <small key={a.element_id}>Possible {a.relationship.replaceAll('_', ' ')}: {a.part}, element {a.element_id}. Review the model before replacing.</small>)}</td>

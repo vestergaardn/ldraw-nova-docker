@@ -79,7 +79,7 @@ def test_llm_history_sends_only_newest_images(tmp_path: Path):
     assert agent.llm_history(stored, vision=False, resolve=resolve) == []
 
 
-def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: ChatStore):
+def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: ChatStore, bridge_shop):
     fake, calls = scripted([
         [chunk(role="assistant", content="Building it. "),
          *tool_call_chunks("c1", "run_toolkit", {"arguments": ["build", "examples/bridge.plan.json", "--output", "output/bridge.mpd"]})],
@@ -100,6 +100,8 @@ def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: Cha
     async def run():
         await agent.start_turn(store, chat["id"], "build an example bridge", entry["id"], {"permissions": "full"})
         await agent._runs[chat["id"]].task
+        import booklets
+        await booklets.shutdown()  # Close background jobs before the test event loop closes.
 
     asyncio.run(run())
     messages = store.messages(chat["id"])

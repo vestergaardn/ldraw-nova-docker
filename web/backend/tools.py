@@ -9,6 +9,7 @@ Where things go:
 from __future__ import annotations
 
 import inspect
+import asyncio
 import hashlib
 import json
 import re
@@ -155,69 +156,139 @@ def artifact_url(ctx: ToolContext, path: Path) -> str:
     return f"/api/chats/{ctx.chat_id}/artifacts/" + quote(path.relative_to(ctx.work_dir).as_posix())
 
 
-async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) -> ToolResult:
+async def _trusted_review(ctx, arguments, timeout):
+    """Only fixed toolkit review commands, in a server-owned directory."""
+    env = toolkit.environment()
+    env['LDRAW_DIR'] = str(settings.LDRAW_DIR)
+    import publications
+    cwd = settings.DATA_DIR / '.publication-review'
+    cwd.mkdir(exist_ok=True)
+    publications._owned(cwd, 0o755)
+    return await sandbox.run([str(toolkit.root() / 'ldraw-agent'), *arguments],
+                             cwd, timeout,
+                             env_extra=env, trusted=True,
+                             on_output=lambda channel, text: ctx.emit('tool_output', {'channel': channel, 'delta': text}))
+
+
+def _draft_snapshot(ctx, path):
+    import publications
     source = resolve_path(ctx, path, write=True)
-    if not source.is_file() or source.suffix.lower() not in {".mpd", ".ldr"}:
-        raise ToolError("Publish a self-contained .mpd or .ldr from this chat's output folder")
+    if not source.is_file() or source.suffix.lower() not in {'.mpd', '.ldr'}:
+        raise ToolError('Choose a self-contained .mpd or .ldr from this chat’s output folder')
     if source.stat().st_size > 32 * 1024 * 1024:
-        raise ToolError("Model exceeds the 32 MB publication limit")
-    import uuid
-    review = ctx.work_dir / "publication" / uuid.uuid4().hex[:12]
-    review.mkdir(parents=True)
-    sandbox.give_to_agent(review.parent)
-    sandbox.give_to_agent(review)
-    # Validate and render the same captured revision even if another tool or
-    # the user edits the working source while publication is running.
-    source_bytes = source.read_bytes()
-    revision = review / "model.mpd"
-    revision.write_bytes(source_bytes)
-    report = review / "validation.json"
-    ctx.emit("progress", {"summary": "Checking the model with LDraw Nova before publication."})
-    validation = await run_command(ctx, ["./ldraw-agent", "validate", str(revision), "--geometry",
-                                         "--detail", "summary", "--report", str(report)], 1800)
-    if validation.exit_code not in (0, 1) or not report.is_file():
-        return ToolResult("Error: toolkit validation could not finish; model was not published.\n" + validation.as_text())
-    warnings = ["Physical buildability is not proven; read the validation and visual review reports."]
-    if validation.exit_code == 1:
-        warnings.append("Toolkit validation failed. This revision is for inspection and needs repair.")
-    slug = _slug(name or source.stem)
-    settings.GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-    # Reserve synchronously before the next await, including concurrent chats.
-    target = settings.GENERATED_DIR / f"{slug}-v{_next_version(slug)}.mpd"
-    target.write_bytes(source_bytes)
-    ctx.emit("progress", {"summary": "Rendering the published model and exporting its parts list."})
-    gallery.publishing.add(target.resolve())
+        raise ToolError('Model exceeds the 32 MB publication limit')
+    return source, publications.capture(source.read_bytes())
+
+
+def _stock_result(ctx, result):
+    report = ctx.work_dir / 'stock-check.json'
+    report.write_text(json.dumps(result, indent=2))
+    sandbox.give_to_agent(report)
+    result['report'] = artifact_url(ctx, report)
+    return ToolResult(json.dumps(result, indent=2))
+
+
+async def t_check_build_parts(ctx: ToolContext, path: str, refresh: bool = False) -> ToolResult:
+    from purchasing import availability
+    ctx.emit('progress', {'summary': 'Checking stock for the draft. The draft remains saved.'})
     try:
-        rendered = await run_command(ctx, ["./ldraw-agent", "render", str(target), "--outdir", str(review),
-                                          "--views", "home"], 600)
-    finally:
-        gallery.publishing.discard(target.resolve())
-    image, bom = review / "home.png", review / "leocad-bom.csv"
-    if rendered.exit_code == 0 and image.exists() and bom.exists():
-        shutil.copyfile(image, snapshot_path_for(target))
-        shutil.copyfile(bom, bom_path_for(target))
-    else:
-        warnings.append("Preview/BOM rendering failed; the model can still be opened in 3D.")
+        _, snapshot = _draft_snapshot(ctx, path)
+        quote_data, problems = await availability.check(snapshot, refresh=refresh)
+        result = availability.feedback(quote_data, problems)
+        if problems:
+            from purchasing import discovery
+            result['available_alternatives'] = await asyncio.to_thread(discovery.alternatives, problems)
+        return _stock_result(ctx, result)
+    except Exception as exc:
+        return _stock_result(ctx, {'status': 'blocked', 'published': False,
+                                  'reason': str(exc) if isinstance(exc, (ValueError, ToolError)) else 'The parts service is unavailable. Resume this saved draft later.',
+                                  'next_action': 'Repair the draft or retry check_build_parts. Do not deliver a model download.'})
+
+
+async def t_search_available_parts(ctx: ToolContext, query: str, quantity: int = 1,
+                                   color: str | None = None, limit: int = 12) -> ToolResult:
+    from purchasing import discovery
+    ctx.emit('progress', {'summary': 'Finding verified parts and colours in LEGO’s US catalogue.'})
+    try:
+        result = await asyncio.to_thread(discovery.search, query, quantity=quantity, color=color, limit=limit)
+        return ToolResult(json.dumps(result, indent=2))
+    except Exception as exc:
+        reason = str(exc) if isinstance(exc, ValueError) else 'The parts catalogue is unavailable. Keep the draft and retry later.'
+        return ToolResult(json.dumps({'status': 'blocked', 'reason': reason, 'results': []}))
+
+
+async def t_publish_model(ctx: ToolContext, path: str, name: str | None = None) -> ToolResult:
+    import publications
+    from purchasing import availability
+    from purchasing.domain import publication_problems
+    source, snapshot = _draft_snapshot(ctx, path)
+    revision = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    # A cheap preliminary check prevents rendering an already unpurchasable draft.
+    ctx.emit('progress', {'summary': 'Checking stock before final model review.'})
+    try:
+        quote_data, problems = await availability.check(snapshot)
+        if problems:
+            quote_data, problems = await availability.check(snapshot, refresh=True)
+        if problems:
+            ctx.emit('progress', {'summary': 'Replacing unavailable parts. The draft needs changes before completion.'})
+            return _stock_result(ctx, {'published': False, **availability.feedback(quote_data, problems)})
+        review = snapshot.parent / 'review-v1'
+        review.mkdir(exist_ok=True)
+        publications._owned(review, 0o755)
+        report, image, bom = review / 'validation.json', review / 'home.png', review / 'leocad-bom.csv'
+        complete = review / 'complete.json'
+        if not complete.is_file() or not all(p.is_file() for p in (report, image, bom)):
+            ctx.emit('progress', {'summary': 'Checking geometry and rendering the final model.'})
+            validation = await _trusted_review(ctx, ['validate', str(snapshot), '--geometry', '--detail', 'summary', '--report', str(report)], 1800)
+            if validation.exit_code != 0 or not report.is_file():
+                return _stock_result(ctx, {'status': 'blocked', 'published': False, 'issue': 'geometry_validation',
+                                          'reason': validation.as_text(), 'next_action': 'Repair the geometry, review the draft, then publish again.'})
+            import render
+            async with render._rendering(snapshot):
+                rendered = await _trusted_review(ctx, ['render', str(snapshot), '--outdir', str(review), '--views', 'home'], 600)
+            if rendered.exit_code != 0 or not image.is_file() or not bom.is_file():
+                return _stock_result(ctx, {'status': 'blocked', 'published': False, 'issue': 'render_failed',
+                                          'reason': rendered.as_text(), 'next_action': 'The draft is saved. Retry publication after fixing the render.'})
+            complete.write_text(json.dumps({'revision': revision, 'review_version': 1}))
+        ctx.emit('progress', {'summary': 'Checking current LEGO stock after rendering.'})
+        after = time.time()
+        quote_data, problems = await availability.check(snapshot, refresh=True, final=True)
+        problems = problems or publication_problems(quote_data, after=after)
+        if problems:
+            ctx.emit('progress', {'summary': 'Stock changed. Repairing the draft before completion.'})
+            return _stock_result(ctx, {'published': False, **availability.feedback(quote_data, problems)})
+        target, receipt = await publications.commit(snapshot, _slug(name or source.stem), quote_data, after=after)
+    except Exception as exc:
+        # Do not expose connection strings or provider errors to the agent/browser.
+        reason = str(exc) if isinstance(exc, (ValueError, ToolError)) else 'The parts service is unavailable. The draft and completed renders are saved.'
+        ctx.emit('progress', {'summary': 'Publication paused. The draft is saved for repair or retry.'})
+        return _stock_result(ctx, {'status': 'blocked', 'published': False, 'reason': reason,
+                                  'next_action': 'Retry this draft when the service responds. Do not deliver a model download.'})
+    ctx.emit('progress', {'summary': 'Completing the model. Every required part passed the US stock check.'})
+    shutil.copyfile(image, snapshot_path_for(target))
+    shutil.copyfile(bom, bom_path_for(target))
+    # Copies of reports are convenient working artifacts, never approval evidence.
+    public_review = ctx.work_dir / 'publication' / revision[:16]
+    public_review.mkdir(parents=True, exist_ok=True)
+    sandbox.give_to_agent(public_review)
+    for file in (report, image, bom):
+        shutil.copyfile(file, public_review / file.name)
+    warnings = ['Stock is not reserved. Physical buildability is not certified.']
     ref = ctx.store.add_model(ctx.chat_id, name or source.stem, target, warnings)
-    from purchasing import service as pricing
-    pricing.schedule(target)
-    ctx.emit("model", {"id": ref["id"], "name": ref["name"]})
-    model_url = "/files/generated/" + quote(target.name)
-    result = {"model_url": model_url, "source": artifact_url(ctx, source),
-              "card_url": f"/chat/{ctx.chat_id}#model-{ref['id']}",
-              "viewer_url": "/viewer/viewer.html?model=" + quote(model_url, safe=""),
-              "download_url": model_url + "?download=1",
-              "sha256": hashlib.sha256(source_bytes).hexdigest(),
-              "validation": artifact_url(ctx, report), "checks_passed": validation.exit_code == 0,
-              "validation_path": str(report),
-              "physical_validity": "not_proven", "warnings": warnings,
-              "note": "Open the preview with view_image and complete visual review and compare-bom before final delivery."}
-    if image.exists():
-        result["preview"] = artifact_url(ctx, image)
-        result["preview_path"] = str(image)
-    if bom.exists():
-        result["bom"] = artifact_url(ctx, bom)
-        result["bom_path"] = str(bom)
+    ctx.emit('model', {'id': ref['id'], 'name': ref['name']})
+    model_url = '/files/generated/' + quote(target.name)
+    result = {'published': True, 'status': 'available', 'model_url': model_url,
+              'card_url': f"/chat/{ctx.chat_id}#model-{ref['id']}",
+              'viewer_url': '/viewer/viewer.html?model=' + quote(model_url, safe=''),
+              'download_url': model_url + '?download=1', 'sha256': revision,
+              'build_availability': {'status': 'available', **receipt},
+              'verification_quote': quote_data['id'], 'coverage': 1.0,
+              'validation': artifact_url(ctx, public_review / report.name), 'checks_passed': True,
+              'validation_path': str(public_review / report.name),
+              'preview': artifact_url(ctx, public_review / image.name), 'preview_path': str(public_review / image.name),
+              'bom': artifact_url(ctx, public_review / bom.name), 'bom_path': str(public_review / bom.name),
+              'physical_validity': 'not_proven', 'warnings': warnings,
+              'note': 'Describe any colour, size or construction changes made for availability. No cart action occurred.'}
     return ToolResult(json.dumps(result, indent=2), models=[ref])
 
 
@@ -275,6 +346,21 @@ def _fn(name: str, description: str, properties: dict, required: list[str]) -> d
 
 
 TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
+    "search_available_parts": (_fn("search_available_parts",
+        "Find construction parts ONLY among verified, available US LEGO Pick a Brick elements. "
+        "Returns exact LDraw part and colour codes, USD prices, quantity limits, and observation times. "
+        "TypeSafe and its keyword fallback rank the same restricted pool. Use before choosing parts. "
+        "Library search and example models do not prove shop availability.",
+        {"query": {"type": "string"}, "quantity": {"type": "integer", "description": "Required quantity, default 1"},
+         "color": {"type": "string", "description": "Optional exact LDraw colour code"},
+         "limit": {"type": "integer", "description": "Result count, 1 to 40, default 12"}},
+        ["query"]), t_search_available_parts),
+    "check_build_parts": (_fn("check_build_parts",
+        "Check a saved draft’s complete physical parts and colours against the US LEGO catalogue. "
+        "Use after substantial assemblies and before rendering. Repair every reported problem. "
+        "A passing draft check does not publish or reserve stock; publish_model checks again after rendering.",
+        {"path": {"type": "string"}, "refresh": {"type": "boolean", "description": "Refresh selected elements from LEGO; default false uses current catalogue observations"}},
+        ["path"]), t_check_build_parts),
     "run_toolkit": (_fn("run_toolkit",
         "Run the standalone LDraw Nova CLI. All commands are available: doctor, spec, discover, catalog, "
         "study, extract, examples, build, validate, inspect, render, compare-bom, manual, vehicle, spaceship, "
@@ -285,8 +371,8 @@ TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
         ["arguments"]), t_run_toolkit),
     "publish_model": (_fn("publish_model",
         "Publish an output MPD revision as an interactive model card in this chat and the My Models collection. "
-        "Preserves source bytes, runs toolkit geometry validation, renders a snapshot and BOM. Failed checks "
-        "are flagged for repair. Use after generating a model and again after final visual review. "
+        "Publishes only the exact snapshot with passing geometry checks and freshly verified US LEGO stock. "
+        "Failures return repair instructions and no model card. Use after draft checks and final visual review. "
         "Use the returned card_url for interactive links, not the raw model_url. "
         "Return links to plans, generator, manifests, reports and reviews alongside the card.",
         {"path": {"type": "string"}, "name": {"type": "string"}}, ["path"]), t_publish_model),

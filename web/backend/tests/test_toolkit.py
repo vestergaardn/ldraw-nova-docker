@@ -51,7 +51,7 @@ def test_workspace_is_standalone_layout_with_chat_local_output(ctx):
     assert "save_model" not in {s["function"]["name"] for s in tools.TOOL_SCHEMAS}
 
 
-def test_real_doctor_build_publish_review_bom_and_download(ctx):
+def test_real_doctor_build_publish_review_bom_and_download(ctx, bridge_shop):
     events = []
     ctx.emit = lambda event, data: events.append((event, data))
 

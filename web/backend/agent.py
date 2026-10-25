@@ -405,7 +405,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         run.emit("done", {})
 
 
-READ_TOOLS = {"list_files", "read_file", "view_image", "report_progress"}
+READ_TOOLS = {"list_files", "read_file", "view_image", "report_progress", "search_available_parts", "check_build_parts"}
 
 
 def mode_prompt(options: dict) -> str:

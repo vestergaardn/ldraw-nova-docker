@@ -32,7 +32,17 @@ class ModelQuote(TypedDict):
 
 
 MAX_AGE = 26 * 3600
-QUOTE_VERSION = 2
+PUBLICATION_MAX_AGE = 600
+QUOTE_VERSION = 3
+
+
+class BuildAvailability(TypedDict):
+    status: str
+    revision: str
+    verification_quote: str | None
+    checked_at: float | None
+    expires_at: float | None
+    enforced: bool
 
 
 def digest(value) -> str:
@@ -59,6 +69,9 @@ class CatalogueElement:
     max_quantity: int | None = None
     currency: str = 'USD'
     delivery_channel: str | None = None
+    max_quantity_source: str | None = None
+    max_quantity_checked_at: float | None = None
+    max_quantity_evidence: dict | None = None
 
     def __post_init__(self):
         if not self.id.isdecimal() or self.availability not in {'available', 'out_of_stock', 'unlisted'}:
@@ -110,9 +123,14 @@ def requirements_from_csv(content: str) -> list[PartRequirement]:
 
 
 def build_quote(revision: str, requirements: list[PartRequirement], index: IdentityIndex,
-                catalogue: dict[str, CatalogueElement], *, now=None, fees=None) -> ModelQuote:
+                catalogue: dict[str, CatalogueElement], *, now=None, fees=None,
+                strict=False, max_age=MAX_AGE) -> ModelQuote:
     now = time.time() if now is None else now
     lines = []
+    required_by_identity = Counter()
+    for requirement in requirements:
+        ids, _ = index.resolve(requirement)
+        if ids: required_by_identity[tuple(ids)] += requirement.quantity
     for requirement in requirements:
         ids, reason = index.resolve(requirement)
         matches = [catalogue[i] for i in ids if i in catalogue]
@@ -120,16 +138,24 @@ def build_quote(revision: str, requirements: list[PartRequirement], index: Ident
         colors = index.colors.get(requirement.color, set())
         lego_colors = index.lego_colors.get(next(iter(colors)), set()) if len(colors) == 1 else set()
         matches = [e for e in matches if e.color_id in lego_colors or (e.availability=='unlisted' and not e.color_id)]
-        matches.sort(key=lambda e: (e.availability != 'available', e.unit_price is None,
+        matches.sort(key=lambda e: (e.availability != 'available',
+                                    strict and (e.max_quantity is None or e.max_quantity < required_by_identity[tuple(ids)]
+                                                or not 0 <= now - e.checked_at <= max_age), e.unit_price is None,
                                     e.unit_price if e.unit_price is not None else 0, e.id))
         chosen = matches[0] if matches else None
         state = chosen.availability if chosen else ('unlisted' if ids else 'unmapped')
         unit_price = chosen.unit_price if chosen else None
-        stale = chosen is not None and now - chosen.checked_at > MAX_AGE
+        stale = chosen is not None and not 0 <= now - chosen.checked_at <= max_age
         limit = chosen.max_quantity if chosen else None
         issue = reason or ('catalogue_color_mismatch' if ids and not matches and any(i in catalogue for i in ids) else None)
         if chosen and limit is not None and requirement.quantity > limit:
             issue = 'quantity_limit'
+        if strict and chosen:
+            issue = issue or ('unknown_quantity_limit' if limit is None else None)
+            issue = issue or ('missing_price' if unit_price is None else None)
+            issue = issue or ('stale_observation' if stale else None)
+            if chosen.max_quantity_checked_at is not None and not 0 <= now - chosen.max_quantity_checked_at <= max_age:
+                issue = issue or 'stale_quantity_limit'
         alternatives = []
         # Suggest only catalogue-declared mould/alternate relationships, in the exact
         # mapped colour. These remain proposals, never silently selected purchases.
@@ -139,7 +165,9 @@ def build_quote(revision: str, requirements: list[PartRequirement], index: Ident
                 if kind not in {'M', 'A'}: continue
                 for candidate_id in sorted(index.elements.get((candidate_part, next(iter(colors))), set())):
                     candidate = catalogue.get(candidate_id)
-                    if candidate and candidate.availability == 'available' and candidate.color_id in lego_colors:
+                    if (candidate and candidate.availability == 'available' and candidate.color_id in lego_colors
+                            and (not strict or (candidate.unit_price is not None and candidate.max_quantity is not None
+                                 and candidate.max_quantity >= requirement.quantity and 0 <= now - candidate.checked_at <= max_age))):
                         alternatives.append({'part': candidate_part, 'element_id': candidate.id,
                             'unit_price': candidate.unit_price, 'relationship': 'mould_variant' if kind == 'M' else 'alternate',
                             'requires_model_review': True, 'evidence': index.evidence})
@@ -148,6 +176,9 @@ def build_quote(revision: str, requirements: list[PartRequirement], index: Ident
                       'line_total': unit_price * requirement.quantity if unit_price is not None else None,
                       'checked_at': chosen.checked_at if chosen else None, 'stale': stale,
                       'max_quantity': limit, 'issue': issue,
+                      'max_quantity_source': chosen.max_quantity_source if chosen else None,
+                      'max_quantity_checked_at': chosen.max_quantity_checked_at if chosen else None,
+                      'max_quantity_evidence': chosen.max_quantity_evidence if chosen else None,
                       'evidence': index.evidence, 'alternatives': alternatives})
     grouped=Counter()
     for line in lines:
@@ -167,9 +198,39 @@ def build_quote(revision: str, requirements: list[PartRequirement], index: Ident
             'priced_quantity': priced, 'purchasable_quantity': purchasable,
             'coverage': purchasable / total if total else 0,
             'unresolved_lines': sum(bool(l['issue']) or l['state'] != 'available' or l['unit_price'] is None for l in lines),
-            'stale': any(l['stale'] for l in lines), 'fees': fees or [],
+            'stale': any(l['stale'] for l in lines), 'fees': fees or [], 'strict': strict,
             'fees_complete': False, 'shipping_tax': 'calculated_at_checkout',
             'review_hash': digest(lines)}
+
+
+def publication_problems(quote, *, now=None, after=None, max_age=PUBLICATION_MAX_AGE):
+    """Check again at the commit boundary, independently of a quote's summary."""
+    now = time.time() if now is None else now
+    problems, quantities = [], Counter()
+    for line in quote['lines']:
+        if line.get('element_id'):
+            quantities[line['element_id']] += line['quantity']
+    if not quote['lines'] or quote.get('currency') != 'USD':
+        return [{'issue': 'incomplete_quote'}]
+    for line in quote['lines']:
+        checked = line.get('checked_at')
+        reason = line.get('issue') or (line['state'] if line['state'] != 'available' else None)
+        if not line.get('element_id') or not line.get('evidence'):
+            reason = reason or 'unverified_identity'
+        if line['unit_price'] is None:
+            reason = reason or 'missing_price'
+        if line['max_quantity'] is None:
+            reason = reason or 'unknown_quantity_limit'
+        elif quantities[line.get('element_id')] > line['max_quantity']:
+            reason = reason or 'quantity_limit'
+        if checked is None or not 0 <= now - checked <= max_age or (after is not None and checked < after):
+            reason = reason or 'stale_observation'
+        limit_checked = line.get('max_quantity_checked_at')
+        if limit_checked is not None and not 0 <= now - limit_checked <= max_age:
+            reason = reason or 'stale_quantity_limit'
+        if reason:
+            problems.append({**line, 'issue': reason})
+    return problems
 
 
 def reviewed_items(quote: dict, *, available_only: bool, now=None) -> list[dict]:
@@ -178,7 +239,8 @@ def reviewed_items(quote: dict, *, available_only: bool, now=None) -> list[dict]
         raise ValueError('Refresh this quote before adding parts')
     valid = [l for l in quote['lines'] if l['state'] == 'available' and l['element_id']
              and l['unit_price'] is not None and not l['issue'] and l['checked_at'] is not None
-             and now - l['checked_at'] <= 600]
+             and l['max_quantity'] is not None and 0 <= now - l['checked_at'] <= 600
+             and (l.get('max_quantity_checked_at') is None or 0 <= now-l['max_quantity_checked_at']<=600)]
     if len(valid) != len(quote['lines']) and not available_only:
         raise ValueError('Choose available parts only or resolve the unavailable parts')
     quantities = Counter()

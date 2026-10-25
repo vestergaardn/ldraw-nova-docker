@@ -10,7 +10,7 @@ import secrets
 import time
 import uuid
 
-from .domain import CatalogueElement, IdentityIndex, reviewed_items
+from .domain import CatalogueElement, IdentityIndex, reviewed_items, publication_problems
 
 
 class DatabaseUnavailable(RuntimeError):
@@ -211,6 +211,76 @@ class Database:
         with self.connection() as db:
             row = db.execute('select payload from lego.model_quotes where revision_id=%s order by created_at desc limit 1', (revision,)).fetchone()
             return row['payload'] if row else None
+
+    def bootstrap_publications(self, legacy):
+        """One cutover only. Later unregistered files can never become legacy."""
+        with self.connection() as db:
+            db.execute('select pg_advisory_xact_lock(3113403)')
+            installed = db.execute("select 1 from lego.publication_bootstraps where id='generated-v1'").fetchone()
+            if not installed:
+                for record in legacy:
+                    db.execute('''insert into lego.model_publications(model_path,revision_id,enforced,evidence)
+                        values(%s,%s,false,%s::jsonb) on conflict(model_path) do nothing''',
+                        (record['file'], record['revision'], json.dumps(record)))
+                db.execute("insert into lego.publication_bootstraps(id) values('generated-v1')")
+            return [row['evidence'] for row in db.execute('select evidence from lego.model_publications')]
+
+    def save_publication(self, record, quote, after):
+        if quote['revision'] != record['revision'] or publication_problems(quote, after=after):
+            raise ValueError('The model no longer has complete, fresh purchasing evidence')
+        with self.connection() as db:
+            # The quote is already immutable and persisted. Check expiry using
+            # database time too; a delayed transaction must not approve stale data.
+            inserted = db.execute('''insert into lego.model_publications
+                (model_path,revision_id,quote_id,enforced,checked_at,expires_at,evidence)
+                select %s,%s,q.id,true,to_timestamp(%s),to_timestamp(%s),%s::jsonb
+                from lego.model_quotes q where q.id=%s and q.revision_id=%s
+                  and q.payload=%s::jsonb and clock_timestamp() < to_timestamp(%s)
+                returning model_path''',
+                (record['file'],record['revision'],record['checked_at'],record['expires_at'],json.dumps(record),
+                 quote['id'],record['revision'],json.dumps(quote),record['expires_at'])).fetchone()
+            if not inserted:
+                raise ValueError('Stock verification expired or the saved quote changed. Check the draft again.')
+
+    def available_candidates(self):
+        """Bounded keyed reads avoid a many-to-many catalogue/mapping join.
+
+        Build reverse maps only after removing ambiguous import aliases. A
+        newer observation always overrides the daily catalogue, including OOS.
+        """
+        from collections import defaultdict
+        with self.connection() as db:
+            current = db.execute("select c.*,i.source from lego.current_catalogue c join lego.identity_imports i on i.id=c.identity_import_id where c.market='US'").fetchone()
+            if not current:
+                raise DatabaseUnavailable('The first parts catalogue is still being prepared')
+            identity = current['identity_import_id']
+            catalogue = {}
+            for row in db.execute("""select payload from lego.catalogue_elements where run_id=%s
+                                     union all select payload from lego.element_observations""", (current['run_id'],)):
+                payload = row['payload']
+                if payload['id'] not in catalogue or payload['checked_at'] > catalogue[payload['id']]['checked_at']:
+                    catalogue[payload['id']] = payload
+            available = {key:value for key,value in catalogue.items() if value['availability']=='available'}
+            aliases, ld_colors, lego_colors = defaultdict(set), defaultdict(set), defaultdict(set)
+            for row in db.execute('select ldraw_part,part_num from lego.part_aliases where import_id=%s', (identity,)):
+                aliases[row['ldraw_part']].add(row['part_num'])
+            for row in db.execute('select system,external_id,color_id from lego.color_mappings where import_id=%s', (identity,)):
+                if row['system']=='LD': ld_colors[row['external_id']].add(row['color_id'])
+                else: lego_colors[row['color_id']].add(row['external_id'])
+            parts, colors = defaultdict(list), defaultdict(list)
+            for alias, matches in aliases.items():
+                if len(matches)==1: parts[next(iter(matches))].append(alias)
+            for external, matches in ld_colors.items():
+                if len(matches)==1: colors[next(iter(matches))].append(external)
+            result = []
+            for row in db.execute('select element_id,part_num,color_id from lego.element_identities where import_id=%s and element_id=any(%s)',
+                                  (identity, list(available))):
+                payload = available[row['element_id']]
+                if payload['color_id'] not in lego_colors[row['color_id']]: continue
+                for part in parts[row['part_num']]:
+                    for color in colors[row['color_id']]:
+                        result.append(dict(part=part,color=color,element_id=row['element_id'],payload=payload,evidence=current['source']))
+            return result
 
     def create_intent(self, quote_id, review_hash, available_only):
         quote = self.quote(quote_id)

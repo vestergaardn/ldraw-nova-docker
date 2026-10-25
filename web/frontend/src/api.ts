@@ -14,6 +14,7 @@ export type QuoteLine = {
   candidate_ids: string[]; state: 'available' | 'out_of_stock' | 'unlisted' | 'unmapped';
   unit_price: number | null; line_total: number | null; checked_at: number | null;
   max_quantity: number | null; stale: boolean; issue: string | null; evidence: string;
+  max_quantity_source?: string | null;
   alternatives: { part: string; element_id: string; unit_price: number | null; relationship: string; requires_model_review: boolean }[];
 };
 export type ModelQuote = {
@@ -21,6 +22,12 @@ export type ModelQuote = {
   known_subtotal: number; subtotal: number | null; total_quantity: number; priced_quantity: number;
   purchasable_quantity: number; coverage: number; unresolved_lines: number; stale: boolean;
   fees: { name: string; amount: number }[]; fees_complete: boolean; review_hash: string;
+  build_availability?: BuildAvailability;
+};
+export type BuildAvailability = {
+  status: 'checking' | 'available' | 'blocked' | 'needs_check';
+  revision: string; verification_quote: string | null;
+  checked_at: number | null; expires_at: number | null; enforced: boolean;
 };
 export type QuoteSummary = Omit<ModelQuote, 'lines'> | { revision: string; status: 'pending' };
 export type CartIntent = {
@@ -48,6 +55,7 @@ export type ModelFile = {
   bom_error: string | null;
   chats?: { id: string; title: string }[]; // chats that produced it (My Models page)
   quote?: QuoteSummary | null;
+  build_availability?: BuildAvailability | null;
   guide_id?: string | null; // assembly guide started after the build, with default options
 };
 

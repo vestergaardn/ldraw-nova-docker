@@ -78,8 +78,11 @@ def _enqueue(model):
         return
     async def calculate():
         try:
-            await quote_model(model, refresh=False, background=True)
-            await quote_model(model, refresh=True, background=True)
+            import publications
+            record = publications.record_for(model)
+            strict = bool(record and record['enforced'])
+            await quote_model(model, refresh=False, background=True, strict=strict)
+            await quote_model(model, refresh=True, background=True, strict=strict)
         except Exception:
             log.exception('Could not update the model price')
         finally:
@@ -89,17 +92,26 @@ def _enqueue(model):
     task.add_done_callback(lambda _: _tasks.pop(key, None))
 
 
-def captured_requirements(source,revision):
+def captured_requirements(source,revision, *, strict=False):
     import toolkit
     folder=settings.CONFIG_DIR/'pricing'/'sources';folder.mkdir(mode=0o700,parents=True,exist_ok=True)
-    cached=folder/(revision+'.json')
-    if cached.is_file():return [PartRequirement(**r) for r in json.loads(cached.read_text())]
+    cached=folder/(revision+('-strict-v1' if strict else '')+'.json')
+    # Strict approval revalidates embedded definitions against the currently
+    # installed library. A previous library revision cannot authorize new work.
+    if cached.is_file() and not strict:return [PartRequirement(**r) for r in json.loads(cached.read_text())]
     snapshot=folder/(revision+'.mpd')
-    snapshot.write_bytes(source);snapshot.chmod(0o600)
+    if not snapshot.is_file():
+        with tempfile.NamedTemporaryFile(dir=folder,delete=False) as stream:
+            temporary=Path(stream.name);stream.write(source)
+        temporary.chmod(0o600);temporary.replace(snapshot)
     environment=toolkit.environment()
-    result=subprocess.run([str(toolkit.root()/'.venv/bin/python'),'-m','ldraw_tools.purchasing_bom',str(snapshot)],
+    environment['LDRAW_DIR']=str(settings.LDRAW_DIR)
+    result=subprocess.run([str(toolkit.root()/'.venv/bin/python'),'-m','ldraw_tools.purchasing_bom',str(snapshot),
+                           *(['--strict'] if strict else [])], cwd=toolkit.root(),
                           env=environment,capture_output=True,text=True,timeout=120)
-    if result.returncode:raise ValueError('The saved model could not produce a complete parts list')
+    if result.returncode:
+        detail=result.stderr.strip().splitlines()[-1] if result.stderr.strip() else 'Incomplete parts list'
+        raise ValueError('The saved model could not produce a complete parts list: '+detail[:1000])
     rows=json.loads(result.stdout);requirements=[PartRequirement(**r) for r in rows]
     if not requirements or any(r.quantity<1 for r in requirements):raise ValueError('Invalid model parts list')
     with tempfile.NamedTemporaryFile(mode='w',dir=folder,delete=False) as stream:
@@ -108,7 +120,8 @@ def captured_requirements(source,revision):
     return requirements
 
 
-async def quote_model(model: Path, *, refresh=False, database=None, provider=None, background=False):
+async def quote_model(model: Path, *, refresh=False, database=None, provider=None, background=False,
+                      strict=False, max_age=MAX_AGE):
     global _capacity, _interactive_capacity
     if _capacity is None:_capacity=asyncio.Semaphore(2)
     if _interactive_capacity is None:_interactive_capacity=asyncio.Semaphore(1)
@@ -120,17 +133,19 @@ async def quote_model(model: Path, *, refresh=False, database=None, provider=Non
     async with capacity, lock:
         db, provider = database or Database(), provider or LegoCatalogue()
         source = await asyncio.to_thread(model.read_bytes)
-        if len(source)>5*1024*1024:raise ValueError('Pricing supports model files up to 5 MB')
+        if len(source)>32*1024*1024:raise ValueError('Pricing supports model files up to 32 MB')
         revision = hashlib.sha256(source).hexdigest()
-        requirements = await asyncio.to_thread(captured_requirements,source,revision)
+        requirements = await asyncio.to_thread(captured_requirements,source,revision, **({'strict': True} if strict else {}))
         index, catalogue = await asyncio.to_thread(db.inputs, requirements)
         if refresh:
             ids = sorted({element for r in requirements for element in index.resolve(r)[0]})
             fresh = await asyncio.to_thread(provider.refresh, ids)
+            if set(fresh) != set(ids):
+                raise DatabaseUnavailable('LEGO returned an incomplete stock check. The draft is saved.')
             await asyncio.to_thread(db.observe, fresh)
             catalogue.update(fresh)
         fees = await asyncio.to_thread(db.fees)
-        quote = build_quote(revision, requirements, index, catalogue, fees=fees)
+        quote = build_quote(revision, requirements, index, catalogue, fees=fees, strict=strict, max_age=max_age)
         await asyncio.to_thread(db.save_quote, quote, model.name, revision, requirements)
         await asyncio.to_thread(_save, quote)
         return quote

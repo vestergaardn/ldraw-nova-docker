@@ -22,6 +22,8 @@ def db():
   if not c.execute("select 1 from pg_namespace where nspname='lego'").fetchone():
    c.execute((Path(__file__).resolve().parents[2]/'supabase/migrations/20261025001139_purchasing_catalogue.sql').read_text())
   c.execute((Path(__file__).resolve().parents[2]/'supabase/migrations/20261025010718_immutable_revision_quotes.sql').read_text())
+  if not c.execute("select to_regclass('lego.model_publications')").fetchone()[0]:
+   c.execute((Path(__file__).resolve().parents[2]/'supabase/migrations/20261025064149_verified_model_publications.sql').read_text())
   c.execute("alter role lego_app login password 'test-only-password'")
  d=Database(url.replace('postgres:', 'lego_app:').split('@')[0]+'@'+url.split('@')[1])
  # Use a real restricted role; production credentials must never enter this fixture.
@@ -69,7 +71,7 @@ def test_public_roles_have_no_access_and_backend_cannot_change_schema(db):
 
 
 def test_quotes_and_revisions_are_append_only_for_the_app(db):
- for table in ['model_quotes','model_revisions']:
+ for table in ['model_quotes','model_revisions','model_publications','publication_bootstraps']:
   with db.connection() as c:
    assert c.execute("select has_table_privilege(current_user,%s,'INSERT') as allowed",('lego.'+table,)).fetchone()['allowed']
    assert not c.execute("select has_table_privilege(current_user,%s,'UPDATE') as allowed",('lego.'+table,)).fetchone()['allowed']
@@ -94,3 +96,31 @@ def test_observations_keep_newest_values_and_only_record_real_changes(db):
  with db.connection() as c:
   row=c.execute("select new_value from lego.price_changes where element_id='300121' order by id desc limit 1").fetchone()
   assert row['new_value']['unit_price']==31
+
+
+def test_publication_evidence_matches_quote_and_expiry(db):
+ from purchasing.domain import publication_problems
+ _,i,elements=seed(db);req=[PartRequirement('3001','4',2)]
+ q=build_quote(uuid.uuid4().hex*2,req,i,elements,strict=True,max_age=600)
+ db.save_quote(q,'approved.mpd',q['revision'],req)
+ record=dict(file=uuid.uuid4().hex+'.mpd',revision=q['revision'],enforced=True,
+             checked_at=q['checked_at'],expires_at=q['checked_at']+600,verification_quote=q['id'])
+ db.save_publication(record,q,q['checked_at']-1)
+ with db.connection() as c:
+  saved=c.execute('select * from lego.model_publications where model_path=%s',(record['file'],)).fetchone()
+  assert saved['revision_id']==q['revision'] and saved['enforced']
+ for role in ['anon','authenticated']:
+  with db.connection() as c:
+   for table in ['model_publications','publication_bootstraps']:
+    assert not c.execute("select has_table_privilege(%s,%s,'SELECT') allowed",(role,'lego.'+table)).fetchone()['allowed']
+    assert not c.execute("select has_table_privilege(%s,%s,'INSERT') allowed",(role,'lego.'+table)).fetchone()['allowed']
+ with pytest.raises(ValueError):db.save_publication({**record,'file':'changed.mpd','revision':'0'*64},q,0)
+ with pytest.raises(ValueError):db.save_publication({**record,'file':'old.mpd'},q,q['checked_at']+1)
+
+
+def test_candidate_query_excludes_ambiguous_mappings_and_out_of_stock(db):
+ seed(db)
+ rows=db.available_candidates()
+ assert any(r['part']=='3001' and r['color']=='4' and r['payload']['id']=='300121' for r in rows)
+ db.observe({'300121':CatalogueElement('300121','3001','21','Brick','out_of_stock',21,time.time()+1,5)})
+ assert not any(r['payload']['id']=='300121' for r in db.available_candidates())

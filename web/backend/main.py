@@ -23,7 +23,7 @@ import litellm
 import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
@@ -38,6 +38,7 @@ import model_discovery
 import browser_auth
 import inference
 import render
+import publications
 from purchasing import service as pricing
 from purchasing.database import Database as PartsDatabase, DatabaseUnavailable
 from purchasing.domain import import_csv, reviewed_items
@@ -55,7 +56,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 async def lifespan(_app: FastAPI):
     for folder in (settings.GENERATED_DIR, settings.CHATS_DIR, settings.OUTPUT_DIR):
         folder.mkdir(parents=True, exist_ok=True)
-    sandbox.give_to_agent(settings.GENERATED_DIR)      # agent scripts may publish models there
+    await asyncio.to_thread(publications.initialize)
     get_store()
     pricing.initialize()
     yield
@@ -338,6 +339,10 @@ def file_url(path: Path, versioned: bool = False) -> Optional[str]:
         url = "/files/" + quote(rel)
     if not path.is_file():
         return None
+    if path.parent.resolve() == settings.GENERATED_DIR.resolve() and not publications.serving_allowed(path):
+        return None
+    if path.suffix.lower() in MODEL_SUFFIXES and not is_gallery(path) and not publications.approved(path):
+        return None
     return f"{url}?v={path.stat().st_mtime_ns}" if versioned else url
 
 
@@ -352,7 +357,8 @@ def _status(path: Path, kind: str, in_gallery: bool) -> tuple[str, Optional[str]
 def model_info(path: Path) -> dict:
     """A model file in the collection, as the UI sees it: its snapshot (status,
     image_url), BOM (bom_status, bom_url), part count (from the BOM), notes
-    (info_url and info_heading, from its .md) and its collection."""
+    (info_url and info_heading, from its .md), its collection and any assembly
+    guide already started with the default options (guide_id)."""
     exists = path.is_file()
     in_gallery = is_gallery(path)
     status, error = _status(path, "snapshot", in_gallery) if exists else ("missing", None)
@@ -367,6 +373,7 @@ def model_info(path: Path) -> dict:
         "size": stat.st_size if stat else 0, "mtime": stat.st_mtime if stat else 0,
         "status": status, "error": error, "bom_status": bom_status, "bom_error": bom_error,
         "quote": pricing.summary(path) if exists else None,
+        "build_availability": publications.availability(path) if exists else None,
         "guide_id": booklets.prepared(path) if exists and not in_gallery else None,
     }
 
@@ -380,6 +387,8 @@ def chat_models(store: ChatStore, chat_id: str) -> dict[str, dict]:
     result = {}
     for ref in store.models(chat_id):
         path = store.resolve(chat_id, ref["model"])
+        if path.is_file() and not publications.approved(path):
+            continue
         result[ref["id"]] = {**model_info(path), "id": ref["id"], "name": ref["name"],
                              "warnings": ref.get("warnings", []), "created_at": ref["created_at"]}
     return result
@@ -432,7 +441,7 @@ async def chats_get(chat_id: str):
                     document["url"] = None
     models = chat_models(store, chat_id)
     gallery.ensure_artifacts(store.resolve(chat_id, ref["model"]) for ref in store.models(chat_id)
-                             if store.resolve(chat_id, ref["model"]).is_file())
+                             if publications.approved(store.resolve(chat_id, ref["model"])))
     return {"chat": {**chat, "running": agent.is_running(chat_id)}, "messages": messages, "models": models}
 
 
@@ -511,7 +520,14 @@ def chat_artifact(chat_id: str, path: str):
     file = safe_join(store.work_dir(chat_id), path)
     if not file or not file.is_file():
         _not_found()
-    return FileResponse(file, filename=file.name, headers={
+    if file.stat().st_size > 32 * 1024 * 1024:
+        raise HTTPException(413, 'Artifact exceeds the 32 MB download limit')
+    data = file.read_bytes()
+    if not publications.artifact_allowed(file.name, data):
+        raise HTTPException(409, 'This draft has not passed publication. Ask the builder to repair and publish it.')
+    import mimetypes
+    return Response(data, media_type=mimetypes.guess_type(file.name)[0] or 'application/octet-stream', headers={
+        'Content-Disposition': "attachment; filename*=UTF-8''" + quote(file.name),
         "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "sandbox; default-src 'none'",
     })
@@ -525,7 +541,7 @@ async def models_list():
     """Every model in data/generated, newest first. Models without a snapshot
     or BOM get them made in the background; poll until
     `pending` is 0."""
-    models = gallery.collection(settings.GENERATED_DIR)
+    models = [path for path in gallery.collection(settings.GENERATED_DIR) if publications.approved(path)]
     gallery.ensure_artifacts(models)
     index = model_chat_index(get_store())
     items = [{**model_info(path), "chats": index.get(path, [])} for path in models]
@@ -574,7 +590,8 @@ def model_from_url(url: str) -> Optional[Path]:
         if path.startswith(prefix):
             model = safe_join(root, path[len(prefix):])
             if (model is not None and model.is_file() and model.parent == root.resolve()
-                    and model.suffix.lower() in MODEL_SUFFIXES):
+                    and model.suffix.lower() in MODEL_SUFFIXES
+                    and (root == settings.GALLERY_MODELS_DIR or publications.approved(model))):
                 return model
     return None
 
@@ -616,7 +633,9 @@ class QuoteRequest(BaseModel):
 async def quote_create(body: QuoteRequest):
     model = model_from_url(body.url) or _not_found('Unknown model')
     try:
-        return await pricing.quote_model(model, refresh=body.refresh)
+        record = publications.record_for(model)
+        result = await pricing.quote_model(model, refresh=body.refresh, strict=bool(record and record['enforced']))
+        return {**result, 'build_availability': publications.availability(model)}
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except DatabaseUnavailable as exc:
@@ -629,7 +648,7 @@ async def quote_create(body: QuoteRequest):
 @app.get('/api/quotes/summary')
 def quote_summary(url: str):
     model=model_from_url(url) or _not_found('Unknown model')
-    return JSONResponse(pricing.summary(model),headers={'Cache-Control':'no-store'})
+    return JSONResponse({**(pricing.summary(model) or {}), 'build_availability': publications.availability(model)},headers={'Cache-Control':'no-store'})
 
 
 @app.get('/api/quotes/{quote_id}')
@@ -744,6 +763,8 @@ def assembly_guide_pdf(job_id: str):
 def collection_zip(folder: Path, filename: str):
     """Download one collection with its snapshots, BOMs and notes."""
     files = [p for p in sorted(folder.iterdir()) if p.is_file() and not p.name.startswith(".")] if folder.is_dir() else []
+    if folder.resolve() == settings.GENERATED_DIR.resolve():
+        files = [p for p in files if publications.serving_allowed(p)]
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in files:
@@ -786,6 +807,9 @@ def files(path: str, download: bool = False):
     file = safe_join(settings.DATA_DIR, path)
     if file is None or file_url(file) is None:
         _not_found()
+    if settings.CHATS_DIR.resolve() in file.parents:
+        if file.stat().st_size > 32 * 1024 * 1024 or not publications.artifact_allowed(file.name, file.read_bytes()):
+            _not_found()
     return _serve(settings.DATA_DIR, path, download=download)
 
 

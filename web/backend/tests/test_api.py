@@ -11,7 +11,7 @@ import settings
 from main import app
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def client():
     with TestClient(app) as c:
         yield c
@@ -100,7 +100,7 @@ def test_output_folder_is_never_served(client, data_dir: Path):
         assert client.get(url).status_code == 404, url
 
 
-def test_models_page_lists_generated_and_renders_missing_snapshots(client, data_dir: Path):
+def test_models_page_lists_generated_and_renders_missing_snapshots(client, data_dir: Path, legacy_model):
     generated = data_dir / "generated"
     generated.mkdir(parents=True, exist_ok=True)
     (generated / "hand-made.mpd").write_text(
@@ -108,6 +108,7 @@ def test_models_page_lists_generated_and_renders_missing_snapshots(client, data_
         "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 1 20 -24 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
     (generated / "single.ldr").write_text("0 Single-file model\n1 14 0 0 0 1 0 0 0 1 0 0 0 1 3003.dat\n")
     (generated / "broken.dat").write_bytes(b"\x00\x01 not ldraw")
+    for name in ['hand-made.mpd','single.ldr','broken.dat']: legacy_model(generated/name)
     (generated / "nested").mkdir(exist_ok=True)
     (generated / "nested" / "ignored.mpd").write_text("0 FILE x\n")
 
@@ -139,7 +140,7 @@ def test_models_page_lists_generated_and_renders_missing_snapshots(client, data_
     assert z.status_code == 200 and z.headers["content-type"] == "application/zip"
 
 
-def test_gallery_and_generated_models_are_independent(client, data_dir: Path, gallery_dir: Path):
+def test_gallery_and_generated_models_are_independent(client, data_dir: Path, gallery_dir: Path, legacy_model):
     from main import model_from_url
     generated = data_dir / "generated"
     generated.mkdir(parents=True, exist_ok=True)
@@ -151,6 +152,7 @@ def test_gallery_and_generated_models_are_independent(client, data_dir: Path, ga
                              "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
             model.with_suffix(".png").write_bytes(b"\x89PNG\r\n\x1a\n")
             model.with_suffix(".csv").write_text("Part Name,Color,Quantity,Part ID,Color Code\nBrick 2 x 4,Red,1,3001,4\n")
+            if folder == generated: legacy_model(model)
             if folder == gallery_dir:
                 model.with_suffix(".md").write_text(f"# Notes\n\n## {model.stem}\n\n**Prompt:** build it\n\n## Later heading")
 
@@ -224,7 +226,7 @@ def test_absent_gallery_is_empty(client, tmp_path, monkeypatch):
         assert zf.namelist() == []
 
 
-def test_chat_api_resolves_model_references(client, data_dir: Path):
+def test_chat_api_resolves_model_references(client, data_dir: Path, legacy_model):
     import settings as s
     from store import ChatStore
     store = ChatStore(s.CHATS_DIR, s.OUTPUT_DIR)
@@ -232,6 +234,7 @@ def test_chat_api_resolves_model_references(client, data_dir: Path):
     model = s.GENERATED_DIR / "referenced.mpd"
     model.write_text("0 FILE referenced.ldr\n0 Referenced from a chat\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n")
     model.with_suffix(".md").write_text("## A model built in chat\n\nThe full notes.")
+    legacy_model(model)
     ref = store.add_model(chat["id"], "Referenced", model, warnings=["w"])
     store.add_message(chat["id"], {"role": "tool", "tool_call_id": "x", "content": "ok",
                                    "_models": [ref["id"]], "_images": ["../../generated/referenced.png"]})
@@ -247,7 +250,7 @@ def test_chat_api_resolves_model_references(client, data_dir: Path):
     assert client.get("/api/chats/..%2F..%2Fetc").status_code == 404
 
 
-def test_glb_export_with_mpd2glb(client, data_dir: Path):
+def test_glb_export_with_mpd2glb(client, data_dir: Path, legacy_model):
     import glb
     generated = data_dir / "generated"
     generated.mkdir(parents=True, exist_ok=True)
@@ -255,6 +258,7 @@ def test_glb_export_with_mpd2glb(client, data_dir: Path):
     model.write_text("0 FILE glb-test.ldr\n0 A tiny model for the glb test\n"
                      "1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n1 15 0 -24 0 1 0 0 0 1 0 0 0 1 3003.dat\n")
     url = "/files/generated/glb-test.mpd"
+    legacy_model(model)
 
     r = client.get("/api/glb", params={"url": url})
     assert r.status_code == 200, r.text
@@ -273,8 +277,8 @@ def test_glb_export_with_mpd2glb(client, data_dir: Path):
 
     model.write_text(model.read_text() + "1 1 0 -48 0 1 0 0 0 1 0 0 0 1 3001.dat\n")   # new version
     r2 = client.get("/api/glb", params={"url": url})
-    assert r2.status_code == 200 and r2.content != r.content
-    assert len(list(glb.CACHE_DIR.glob("*.glb"))) == 1                          # the old version was dropped
+    assert r2.status_code == 404  # Editing a legacy file cannot carry its approval to new bytes.
+    assert len(list(glb.CACHE_DIR.glob("*.glb"))) == 1
 
     for bad in ("/files/generated/..%2F..%2Fetc%2Fpasswd", "/files/generated/nope.mpd", "/files/chats/a/b.mpd",
                 "/files/output/x/y.mpd", "/files/generated/glb-test.png", "https://example.com/x.mpd"):

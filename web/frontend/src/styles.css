@@ -479,3 +479,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .guide-options select { width: 100%; min-width: 0; }
 .guide-options .guide-improve { display: flex; align-items: start; }
 .guide-improve input { width: auto; margin-top: 3px; }
+
+/* Stock evidence has its own status, independent of image rendering. */
+.build-availability { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .65rem; min-height: 2.5rem; }
+.build-availability .badge { font-variant-numeric: tabular-nums; }

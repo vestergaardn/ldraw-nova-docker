@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 import random
+import hashlib
 import re
 import threading
 import time
@@ -28,8 +29,12 @@ class CatalogueError(RuntimeError):
 
 
 class LegoCatalogue:
-    def __init__(self, *, interval=1.1, transport=None, sleep=time.sleep):
+    def __init__(self, *, interval=1.1, transport=None, sleep=time.sleep, quantity_policy=None):
         self.interval, self.transport, self.sleep = interval, transport or self._request, sleep
+        # An injected test transport never makes unrelated external requests.
+        from .quantity_policy import load
+        self.quantity_policy = quantity_policy or (load if transport is None else lambda: None)
+        self._policy_failed_at = 0
 
     def _request(self, payload):
         global _last_request
@@ -74,15 +79,26 @@ class LegoCatalogue:
                 raise ValueError('Invalid pagination')
             elements = []
             checked_at = time.time()
+            policy = None
+            if time.time()-self._policy_failed_at>300 and any('maxOrderQuantity' in row and row['maxOrderQuantity'] is None for row in rows):
+                try: policy = self.quantity_policy()
+                except (OSError, ValueError): self._policy_failed_at=time.time()
             for row in rows:
                 price = row.get('price')
+                limit = row.get('maxOrderQuantity')
+                default = limit is None and 'maxOrderQuantity' in row and policy is not None
+                if default: limit = policy['max_quantity']
                 elements.append(CatalogueElement(
                     id=str(row['id']), design_id=str(row['designId']),
                     color_id=str(row['facets']['color']['key']), name=row['name'],
                     availability={'AVAILABLE': 'available', 'OUT_OF_STOCK': 'out_of_stock'}[row['availability']],
                     unit_price=price['centAmount'] if price else None,
                     currency=price['currencyCode'] if price else 'USD', checked_at=checked_at,
-                    max_quantity=row.get('maxOrderQuantity'), delivery_channel=row.get('deliveryChannel')))
+                    max_quantity=limit, delivery_channel=row.get('deliveryChannel'),
+                    max_quantity_source=(policy['source']+'#'+hashlib.sha256(json.dumps(policy['scripts'],sort_keys=True).encode()).hexdigest()
+                                         if default else ENDPOINT+'#maxOrderQuantity' if limit is not None else None),
+                    max_quantity_checked_at=policy['checked_at'] if default else checked_at if limit is not None else None,
+                    max_quantity_evidence=policy if default else None))
             if len({e.id for e in elements}) != count:
                 raise ValueError('Duplicate element IDs')
             if ids is not None and any(e.id not in ids for e in elements):
