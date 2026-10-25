@@ -23,9 +23,17 @@ _commit_lock = None
 MODEL_SUFFIXES = {'.mpd', '.ldr', '.dat'}
 
 
-def _owned(path, mode):
+def _owned(path, mode, *, storage_root=False):
     if path.is_symlink():
-        raise ValueError('A protected publication path cannot be a symbolic link')
+        # Modal mounts a volume through a root-owned link. Permit only this
+        # configured storage root, with a target and ancestors the agent cannot
+        # replace. Model files, collection folders and snapshots still reject links.
+        target = path.resolve(strict=True)
+        protected = [path.parent.resolve(), *path.parent.resolve().parents,
+                     target, *target.parents]
+        if (not storage_root or path.lstat().st_uid != 0 or
+                any(p.stat().st_uid != 0 or p.stat().st_mode & 0o022 for p in protected)):
+            raise ValueError('A protected publication path cannot be an untrusted symbolic link')
     if os.geteuid() == 0:
         os.chown(path, 0, 0)
     path.chmod(mode)
@@ -36,7 +44,7 @@ def protect_collection():
     # the entire generated directory even if generated itself were read-only.
     for path in (settings.DATA_DIR, settings.GENERATED_DIR):
         path.mkdir(parents=True, exist_ok=True)
-        _owned(path, 0o755)
+        _owned(path, 0o755, storage_root=path == settings.DATA_DIR)
     for path in settings.GENERATED_DIR.iterdir():
         if path.is_file() and not path.is_symlink():
             _owned(path, 0o644)

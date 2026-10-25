@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import time
 import zipfile
+import tempfile
+import shutil
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +24,28 @@ from purchasing import service, discovery
 from purchasing.domain import CatalogueElement, IdentityIndex, PartRequirement, build_quote, publication_problems
 
 SOURCE = b'0 FILE model.ldr\n0 Stock fixture\n1 4 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n'
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason='Checks production server ownership')
+def test_trusted_volume_root_link_keeps_collection_protected(monkeypatch):
+    root = Path(tempfile.mkdtemp(prefix='publication-volume-', dir='/srv'))
+    try:
+        root.chmod(0o755)
+        volume = root / 'volume'; volume.mkdir()
+        link = root / 'data'; link.symlink_to(volume, target_is_directory=True)
+        monkeypatch.setattr(settings,'DATA_DIR',link)
+        monkeypatch.setattr(settings,'GENERATED_DIR',link/'generated')
+        publications.protect_collection()
+        assert link.is_symlink() and volume.stat().st_uid == 0
+        assert (link/'generated').stat().st_uid == 0
+        # Only the trusted storage root can be a link. Collection links cannot.
+        (link/'generated').rmdir(); (link/'generated').symlink_to(root,target_is_directory=True)
+        with pytest.raises(ValueError): publications.protect_collection()
+        (link/'generated').unlink()
+        volume.chmod(0o777)
+        with pytest.raises(ValueError): publications.protect_collection()
+    finally:
+        shutil.rmtree(root)
 
 
 class Shop:
