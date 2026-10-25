@@ -56,6 +56,9 @@ def summary(model):
     try:
         quote = json.loads(_cache(revision).read_text())
         result = {k: v for k, v in quote.items() if k != 'lines'}
+        observed=[line['checked_at'] for line in quote['lines'] if line.get('checked_at') is not None]
+        result['checked_at']=min(observed) if observed else None
+        result['refreshing']=str(model.resolve()) in _tasks
         result['stale'] = quote['stale'] or time.time() - quote['created_at'] > MAX_AGE
         if result['stale']:schedule(model)
         return result
@@ -70,7 +73,7 @@ def schedule(model):
 
 
 def _enqueue(model):
-    key = str(model)
+    key = str(model.resolve())
     if key in _tasks or len(_tasks)>=32 or time.time() - _cooldown.get(key, 0) < 60:
         return
     async def calculate():

@@ -15,7 +15,7 @@ export type QuoteLine = {
   alternatives: { part: string; element_id: string; unit_price: number | null; relationship: string; requires_model_review: boolean }[];
 };
 export type ModelQuote = {
-  id: string; revision: string; currency: 'USD'; created_at: number; lines: QuoteLine[];
+  id: string; revision: string; currency: 'USD'; created_at: number; checked_at?: number | null; refreshing?: boolean; lines: QuoteLine[];
   known_subtotal: number; subtotal: number | null; total_quantity: number; priced_quantity: number;
   purchasable_quantity: number; coverage: number; unresolved_lines: number; stale: boolean;
   fees: { name: string; amount: number }[]; fees_complete: boolean; review_hash: string;

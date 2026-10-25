@@ -50,3 +50,19 @@ def test_user_review_is_not_queued_behind_background_pricing(tmp_path,monkeypatc
         queued.cancel()
         await asyncio.gather(queued,return_exceptions=True)
     asyncio.run(check())
+
+
+def test_summary_reports_price_observation_age_and_refresh_progress(tmp_path,monkeypatch):
+    import json,time
+    from purchasing import service
+    model=tmp_path/'revision.mpd';model.write_text('0 model')
+    monkeypatch.setattr(service.settings,'CONFIG_DIR',tmp_path/'config')
+    revision=service.revision_for(model);now=time.time()
+    cache=service._cache(revision);cache.parent.mkdir(parents=True)
+    cache.write_text(json.dumps({'id':'saved','revision':revision,'created_at':now,'stale':False,
+                                'lines':[{'checked_at':now-3600},{'checked_at':now-10}]}))
+    running={str(model.resolve()):object()};monkeypatch.setattr(service,'_tasks',running)
+    summary=service.summary(model)
+    assert summary['checked_at']==now-3600 and summary['refreshing'] is True
+    running.clear()
+    assert service.summary(model)['refreshing'] is False

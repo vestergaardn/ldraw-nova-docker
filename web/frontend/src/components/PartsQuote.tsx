@@ -20,7 +20,7 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
   const pending = useRef<string | null>(null);
   useEffect(() => setSummary(initial), [initial]);
   useEffect(() => {
-    if (summary && 'id' in summary && !summary.stale) return;
+    if (summary && 'id' in summary && !summary.stale && !summary.refreshing) return;
     let cancelled=false;
     const timer=setTimeout(async () => { try { const next=await api.quoteSummary(modelUrl); if (!cancelled) setSummary(next); } catch { if (!cancelled) setSummary({revision:'pending',status:'pending'}); } },4000);
     return () => {cancelled=true;clearTimeout(timer);};
@@ -70,7 +70,7 @@ export default function PartsQuote({ modelUrl, initial }: { modelUrl: string; in
     <div className="quote-summary">
       <strong>{priced ? (priced.priced_quantity ? money(priced.subtotal ?? priced.known_subtotal) : 'Price unavailable') : 'Parts pricing'}</strong>
       <span className="muted small">{priced ? `${priced.subtotal === null ? 'Known prices · ' : ''}${priced.purchasable_quantity}/${priced.total_quantity} pieces available · ${priced.unresolved_lines} rows need review` : 'US LEGO Pick a Brick · USD'}</span>
-      {priced && <span className="muted small">{priced.stale ? 'Prices need an update' : `Checked ${timeAgo(priced.created_at)}`}</span>}
+      {priced && <span className="muted small">{priced.refreshing ? 'Updating prices…' : priced.stale ? 'Prices need an update' : priced.checked_at === null ? 'Prices need a match' : `Checked ${timeAgo(priced.checked_at ?? priced.created_at)}`}</span>}
       {priced && <span className="muted small">{priced.fees.length ? priced.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation'}</span>}
     </div>
     <button ref={opener} type="button" onClick={review}>Review parts and cost</button>

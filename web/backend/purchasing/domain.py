@@ -16,6 +16,7 @@ class ModelQuote(TypedDict):
     revision: str
     currency: str
     created_at: float
+    checked_at: float | None
     lines: list[dict]
     known_subtotal: int
     subtotal: int | None
@@ -31,7 +32,7 @@ class ModelQuote(TypedDict):
 
 
 MAX_AGE = 26 * 3600
-QUOTE_VERSION = 1
+QUOTE_VERSION = 2
 
 
 def digest(value) -> str:
@@ -159,8 +160,9 @@ def build_quote(revision: str, requirements: list[PartRequirement], index: Ident
     priced = sum(line['quantity'] for line in lines if line['unit_price'] is not None)
     purchasable = sum(line['quantity'] for line in lines if line['state'] == 'available'
                       and line['unit_price'] is not None and not line['stale'] and not line['issue'])
+    checked=[line['checked_at'] for line in lines if line['checked_at'] is not None]
     return {'id': uuid.uuid4().hex, 'version': QUOTE_VERSION, 'revision': revision, 'currency': 'USD',
-            'created_at': now, 'lines': lines, 'known_subtotal': known,
+            'created_at': now, 'checked_at': min(checked) if checked else None, 'lines': lines, 'known_subtotal': known,
             'subtotal': known if priced == total else None, 'total_quantity': total,
             'priced_quantity': priced, 'purchasable_quantity': purchasable,
             'coverage': purchasable / total if total else 0,
