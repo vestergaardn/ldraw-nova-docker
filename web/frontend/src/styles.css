@@ -364,7 +364,6 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .llm-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .model-delete { position: absolute; top: 8px; right: 8px; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: var(--surface); font-size: 22px; box-shadow: var(--shadow); }
 .model-delete:hover { color: var(--danger); border-color: currentColor; }
-.generation-cost-warning { color: #855600; background: #fff3bf; padding: 4px 7px; border-radius: 6px; font-size: 11px; line-height: 1.4; }
 .agent-details { display: flex; flex-direction: column; gap: 5px; padding: 10px 0 4px; }
 .agent-facts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; }
 .agent-facts dt { font-size: 11px; color: var(--muted); }
