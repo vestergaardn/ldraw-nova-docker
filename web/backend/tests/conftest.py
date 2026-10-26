@@ -28,6 +28,14 @@ import pytest  # noqa: E402
 @pytest.fixture(autouse=True)
 def isolated_agent_runtime(monkeypatch):
     import agent
+    import toolkit
+    async def ready(*args):
+        pass
+    # Readiness itself has real subprocess and cancellation tests. Other agent
+    # tests exercise generation without repeating a complete library scan.
+    monkeypatch.setattr(agent, 'prepare_workspace', ready)
+    monkeypatch.setattr(toolkit, 'start_preparation', lambda: None)
+    monkeypatch.setattr(toolkit, 'shutdown', ready)
     monkeypatch.setattr(agent, "_runs", {})
     monkeypatch.setattr(agent, "_shutting_down", False)
     monkeypatch.setattr(agent, "checkpoint", agent._local_checkpoint)

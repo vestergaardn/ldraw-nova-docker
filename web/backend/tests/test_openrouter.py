@@ -170,7 +170,7 @@ def test_agent_roundtrips_streamed_reasoning_through_tools_storage_and_http(endp
     store = ChatStore(settings.CHATS_DIR, settings.OUTPUT_DIR)
     chat_id = store.create_chat()["id"]
     store.add_message(chat_id, {"role": "user", "content": "Build me a car"})
-    run = agent.Run(chat_id, options={"mode": "agent", "permissions": "full"})
+    run = agent.Run(chat_id, options={"mode": "plan", "permissions": "read_only"})
     events = []
     run.emit = lambda event, data: events.append((event, data))
 

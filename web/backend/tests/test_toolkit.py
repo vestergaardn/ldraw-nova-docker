@@ -110,7 +110,9 @@ def test_toolkit_library_override_and_writable_cache(ctx, monkeypatch):
     monkeypatch.setattr(environment_config, "snapshot", lambda: {"LDRAW_DIR": "/custom/library"})
     env = toolkit.environment()
     assert env["LDRAW_DIR"] == "/custom/library"
-    assert env["XDG_CACHE_HOME"] == str(settings.TOOLKIT_DIR / ".cache")
+    assert env["XDG_CACHE_HOME"] == str(settings.TOOLKIT_DIR / ".cache" / 'builder')
+    result = asyncio.run(sandbox.run(["mkdir", "-p", env["XDG_CACHE_HOME"]], ctx.work_dir, 30))
+    assert result.exit_code == 0
     result = asyncio.run(sandbox.run(["test", "-w", env["XDG_CACHE_HOME"]], ctx.work_dir, 30))
     assert result.exit_code == 0
 

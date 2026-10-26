@@ -2,6 +2,7 @@
 import asyncio
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -47,6 +48,11 @@ def test_application_restart_continues_saved_turn_without_another_user_message(m
             if len(requests) == 1:
                 waiting.set()
                 await asyncio.Future()
+            if len(requests) == 2:
+                for part in tool_call_chunks('pause', 'finish_request', {'status': 'blocked',
+                        'reason': 'The stock service is unavailable.', 'next_step': 'Continue after recovery.'}):
+                    yield part
+                return
             yield chunk(content="Recovered the saved build.")
         return stream()
 
@@ -65,13 +71,13 @@ def test_application_restart_continues_saved_turn_without_another_user_message(m
             await asyncio.wait_for(agent._runs[chat_id].task, 2)
 
     asyncio.run(check())
-    assert len(requests) == 2
+    assert len(requests) == 3
     messages = store.messages(chat_id)
     assert sum(m["role"] == "user" for m in messages) == 1
     assert messages[-1]["content"] == "Recovered the saved build."
     assert not any(m.get("content") == "Stopped." for m in messages)
-    assert store.run_state(chat_id)["status"] == "completed"
-    assert store.run_state(chat_id)["steps"] == 2
+    assert store.run_state(chat_id)["status"] == "blocked"
+    assert store.run_state(chat_id)["steps"] == 3
     assert store.run_state(chat_id)["recoveries"] == 1
 
 
@@ -112,6 +118,8 @@ import agent
 from store import ChatStore
 store = ChatStore(Path(sys.argv[1]), Path(sys.argv[2]))
 agent.system_prompt = lambda *args: "Build the model."
+async def ready(*args): pass
+agent.prepare_workspace = ready
 async def die(**kwargs):
     os._exit(33)  # No cancellation handler, shutdown hook or finally block.
 agent.litellm.acompletion = die
@@ -121,19 +129,22 @@ async def run():
 asyncio.run(run())
 '''
     result = subprocess.run([sys.executable, "-c", script, str(store.chats_dir), str(store.output_dir),
-                             chat_id, entry["id"]], timeout=30, capture_output=True)
+                             chat_id, entry["id"]], cwd=Path(__file__).resolve().parents[1], timeout=30, capture_output=True)
     assert result.returncode == 33, result.stderr.decode()
     assert store.run_state(chat_id)["status"] == "running"
-    fake, requests = scripted([[chunk(content="Recovered after process death.")]])
+    fake, requests = scripted([
+        tool_call_chunks('pause', 'finish_request', {'status': 'blocked', 'reason': 'The stock service is unavailable.',
+                                                   'next_step': 'Continue after recovery.'}),
+        [chunk(content="Recovered after process death.")]])
     monkeypatch.setattr(agent.litellm, "acompletion", fake)
 
     async def check():
         async with main.lifespan(main.app):
             await asyncio.wait_for(agent._runs[chat_id].task, 2)
     asyncio.run(check())
-    assert len(requests) == 1
+    assert len(requests) == 2
     assert store.messages(chat_id)[-1]["content"] == "Recovered after process death."
-    assert store.run_state(chat_id)["steps"] == 2
+    assert store.run_state(chat_id)["steps"] == 3
 
 
 @pytest.mark.parametrize("status", [None, "stopped", "completed", "error", "limited"])
@@ -210,6 +221,7 @@ def test_recovery_bounds_and_completed_answer_reconciliation(monkeypatch, recove
     elif reason == "missing_model":
         run.entry_id = "deleted-model"
     else:
+        run.outcome = dict(status='answered', reason='An informational question was answered.', next_step='Choose a model.')
         store.add_message(chat_id, {"role": "assistant", "content": "Already delivered.",
                                    "_turn_id": run.turn_id, "_final_answer": True})
     run.record("running")
@@ -221,7 +233,7 @@ def test_recovery_bounds_and_completed_answer_reconciliation(monkeypatch, recove
     asyncio.run(agent.recover(store))
     assert not requests
     assert not agent.is_running(chat_id)
-    assert store.run_state(chat_id)["status"] == ("completed" if reason == "final_answer" else "error")
+    assert store.run_state(chat_id)["status"] == ("answered" if reason == "final_answer" else "error")
 
 
 def test_checkpoint_failure_does_not_start_unsaved_work(monkeypatch, recovery_app):

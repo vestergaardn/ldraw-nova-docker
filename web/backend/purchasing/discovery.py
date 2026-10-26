@@ -81,6 +81,10 @@ def rank(groups, query, *, limit=12, key=None, runner=subprocess.run):
         reason = 'TypeSafe key is not configured'
         if key and groups:
             environment = toolkit.environment()
+            # Ranking runs as the server, while reference tools run as agent.
+            # Never create root-owned files in the builder's shared cache.
+            # Snapshots have temporary identities: discard their indexes too.
+            environment['XDG_CACHE_HOME'] = str(Path(folder) / 'cache')
             environment['TYPESAFE_API_KEY'] = key
             executable = shutil.which('jev-rerank', path=environment['PATH'])
             if executable:

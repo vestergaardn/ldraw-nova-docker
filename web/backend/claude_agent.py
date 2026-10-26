@@ -10,7 +10,7 @@ import uuid
 
 from claude_agent_sdk import (
     AssistantMessage, ClaudeAgentOptions, ClaudeSDKClient, ResultMessage,
-    SdkMcpTool, TextBlock, StreamEvent, create_sdk_mcp_server,
+    SdkMcpTool, TextBlock, ToolUseBlock, StreamEvent, create_sdk_mcp_server,
 )
 
 import browser_auth
@@ -22,7 +22,7 @@ from tools import ToolContext
 
 
 async def run_claude(store, run, entry, save, execute, prompt, use_tools):
-    from agent import MAX_STEPS, available_tools, checkpoint, llm_history, mode_prompt
+    from agent import MAX_STEPS, available_tools, checkpoint, completion_status, llm_history, mode_prompt
 
     ctx = ToolContext(chat_id=run.chat_id, store=store, emit=run.emit, budget=run.budget)
     sdk_tools = []
@@ -112,7 +112,8 @@ async def run_claude(store, run, entry, save, execute, prompt, use_tools):
                 if text:
                     if not run.draft:
                         run.emit("text", {"delta": text})
-                    save({"role": "assistant", "content": text, "_llm_model": model})
+                    final = bool(completion_status(run)) and not any(isinstance(b, ToolUseBlock) for b in event.content)
+                    save({"role": "assistant", "content": text, "_llm_model": model, "_final_answer": final})
                     run.draft = ""
                 await checkpoint()
             elif isinstance(event, ResultMessage) and event.is_error:

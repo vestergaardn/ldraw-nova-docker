@@ -46,6 +46,7 @@ from purchasing.domain import import_csv, reviewed_items
 from attachments import validate_documents, validate_images
 import sandbox
 import settings
+import toolkit
 from leocad_render import MODEL_SUFFIXES, bom_path_for, snapshot_path_for
 from paths import rel_to, safe_join
 from store import ChatStore, get_store
@@ -60,11 +61,13 @@ async def lifespan(_app: FastAPI):
     await asyncio.to_thread(publications.initialize)
     store = get_store()
     pricing.initialize()
+    toolkit.start_preparation()
     await agent.recover(store)
     try:
         yield
     finally:
         await agent.shutdown()
+        await toolkit.shutdown()
         await pricing.shutdown()
         await booklets.shutdown()
         await browser_auth.shutdown()

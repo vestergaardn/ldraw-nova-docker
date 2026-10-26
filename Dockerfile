@@ -235,6 +235,17 @@ RUN cd /opt/ldraw-nova && uv sync --locked --no-dev --python "${PYTHON_VERSION}"
     && chmod a+x ldraw-agent setup.sh check-model.sh prepare-glb.sh \
     && uv cache clean
 ENV LDRAW_DIR=/opt/ldraw/ldraw LDRAW_NOVA_TOOLKIT_DIR=/opt/ldraw-nova
+# The immutable reference database must be readable without creating WAL files
+# beside its protected source. This changes SQLite storage mode, not its rows.
+RUN python3 -c 'import sqlite3; db=sqlite3.connect("/opt/ldraw-nova/data/ldraw-info.db"); db.execute("PRAGMA journal_mode=DELETE"); db.close()'
+# Ship the complete parts index so the first build does not read every part
+# under a short AI command deadline. Runtime readiness also verifies this cache.
+RUN setpriv --reuid=agent --regid=agent --clear-groups \
+    env LDRAW_NOVA_CACHE_DIR=/opt/ldraw-nova/.cache/builder \
+    /opt/ldraw-nova/.venv/bin/python -c 'from ldraw_tools.common import get_parts; get_parts()'
+RUN install -d -m 0700 /opt/ldraw-nova/.server-cache \
+    && env LDRAW_NOVA_CACHE_DIR=/opt/ldraw-nova/.server-cache \
+       /opt/ldraw-nova/.venv/bin/python -c 'from ldraw_tools.common import get_parts; get_parts()'
 COPY --from=openai-login /opt/codex/package/vendor/x86_64-unknown-linux-musl/ /opt/codex/
 RUN ln -s /opt/codex/bin/codex /usr/local/bin/codex && codex --version
 

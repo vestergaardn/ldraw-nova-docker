@@ -39,6 +39,7 @@ MAX_STEPS = 150
 KEEP_IMAGE_MESSAGES = 2               # only the newest renders are re-sent to vision models
 WORK_LISTING_LIMIT = 60               # files of the work folder listed in the system prompt
 MAX_RECOVERIES = 3                   # stop a repeatedly crashing turn, rather than retry forever
+MAX_CONTINUATIONS = 3                # unfinished final replies do not silently end builds
 
 
 async def _local_checkpoint() -> None:
@@ -69,6 +70,9 @@ class Run:
     stop_reason: Optional[str] = None
     starting: bool = False
     budget: dict = field(default_factory=budgets.normalize)
+    continuations: int = 0
+    outcome: dict | None = None
+    build_work: bool = False
 
     def record(self, status: str) -> None:
         if self.store is not None:
@@ -77,6 +81,7 @@ class Run:
                 "options": self.options, "started_at": self.started_at,
                 "steps": self.steps, "recoveries": self.recoveries,
                 "budget": self.budget,
+                "continuations": self.continuations, "outcome": self.outcome, "build_work": self.build_work,
             })
 
     def emit(self, event: str, data: dict) -> None:
@@ -231,7 +236,7 @@ def llm_history(messages: list[dict], vision: bool, resolve: Callable[[str], Pat
         if isinstance(clean.get("content"), list) and not vision:
             clean["content"] = "\n".join(b["text"] for b in clean["content"] if b.get("type") == "text")
         if mark_turns and m["role"] == "user":
-            clean["_turn_start"] = True
+            clean["_turn_start"] = not m.get("_continuation", False)
         out.append(clean)
         pending.extend(tc["id"] for tc in m.get("tool_calls") or [])
     close_pending()
@@ -328,12 +333,14 @@ async def recover(store: ChatStore) -> None:
             options = model_catalog.validate_options(entry, state["options"])
             run = Run(chat_id, store=store, turn_id=state["turn_id"], entry_id=entry["id"], options=options,
                       started_at=state["started_at"], steps=state.get("steps", 0),
-                      recoveries=state.get("recoveries", 0) + 1, budget=budgets.normalize(state.get('budget')))
+                      recoveries=state.get("recoveries", 0) + 1, budget=budgets.normalize(state.get('budget')),
+                      continuations=state.get('continuations', 0), outcome=state.get('outcome'),
+                      build_work=state.get('build_work', False))
             messages = [m for m in store.messages(chat_id) if m.get("_turn_id") == run.turn_id
                         and not m.get("_ui_only") and not m.get("_partial")]
-            if messages and messages[-1].get("_final_answer"):
+            if messages and messages[-1].get("_final_answer") and completion_status(run):
                 # The final answer reached disk just before the process died.
-                run.record("completed")
+                run.record(completion_status(run))
                 await prepare_guide(store, chat_id, run.started_at)
                 continue
             if run.recoveries > MAX_RECOVERIES:
@@ -415,8 +422,59 @@ async def prepare_guide(store: ChatStore, chat_id: str, since: float) -> None:
         log.exception("could not prepare the assembly guide for chat %s", chat_id)
 
 
+def requires_model(options: dict) -> bool:
+    return options.get('mode', 'agent') == 'agent' and options.get('permissions') != 'read_only'
+
+
+def completion_status(run: Run) -> str | None:
+    if not requires_model(run.options):
+        return 'completed'
+    if run.outcome:
+        return run.outcome['status']
+    # Only a publication made during THIS request can complete a new build/edit.
+    # Model records and publication receipts are server-owned, unlike work files.
+    import publications
+    for model in run.store.models(run.chat_id):
+        if model['created_at'] >= run.started_at:
+            path = run.store.resolve(run.chat_id, model['model'])
+            record = publications.record_for(path)
+            if record and record.get('enforced'):
+                return 'completed'
+    return None
+
+
+async def prepare_workspace(run: Run) -> None:
+    run.emit('progress', {'summary': 'Preparing the LEGO parts index. Saved work will continue when it is ready.'})
+    await toolkit.wait_ready()
+
+
+async def continue_unfinished(run: Run, save) -> bool:
+    if run.continuations >= MAX_CONTINUATIONS:
+        run.outcome = dict(status='blocked', reason='The AI repeatedly ended before publishing a model.',
+                           next_step=budgets.continuation(run.budget))
+        save({'role': 'assistant', '_ui_only': True, '_notice': True,
+              'content': 'The build paused after three unsuccessful continuation attempts. '
+                         'No new model was completed. Your request and any draft files are saved. '
+                         + budgets.continuation(run.budget)})
+        return False
+    run.continuations += 1
+    run.record('running')
+    save({'role': 'user', '_hidden': True, '_continuation': True,
+          'content': 'The requested build has no verified publication from this request. '
+                     'Continue from the saved files and completed tools; preserve the requested concept and defining features. '
+                     'Complete construction, review, availability and budget checks, then use publish_model. '
+                     'A recovered setup delay is not a reason to stop. If a real blocker prevents further work, '
+                     'save NOTES.md and use finish_request with its specific reason and next step. '
+                     'For a purely informational question, use finish_request(status="answered"). '
+                     'All original permissions, budget and remaining work limits still apply.'})
+    await checkpoint()
+    run.emit('progress', {'summary': 'The build is unfinished. Continuing from the saved work.'})
+    return True
+
+
 async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
     chat_id = run.chat_id
+    run.store = store
     caps = llm_config.capabilities(entry)
     vision = caps["vision"] is True
     use_tools = caps["tools"] is not False and run.options.get("mode") != "chat"
@@ -430,9 +488,24 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
     stopped = False
     status = "completed"
     try:
+        if use_tools and requires_model(run.options):
+            await prepare_workspace(run)
         if entry.get("auth_mode") == "browser" and entry["litellm_params"]["model"].startswith("anthropic/"):
             from claude_agent import run_claude
-            await run_claude(store, run, entry, save, execute_tool, system_prompt(store, chat_id), use_tools)
+            while run.steps < MAX_STEPS:
+                await run_claude(store, run, entry, save, execute_tool, system_prompt(store, chat_id), use_tools)
+                status = completion_status(run)
+                if status:
+                    break
+                if run.steps >= MAX_STEPS:
+                    continue
+                if not await continue_unfinished(run, save):
+                    status = 'blocked'
+                    break
+            else:
+                status = 'limited'
+                save({'role': 'assistant', '_ui_only': True, '_notice': True,
+                      'content': f'Stopped after {MAX_STEPS} steps. {budgets.continuation(run.budget)}'})
             return
         params = await inference.params_for(entry, run.options)
         for _step in range(run.steps, MAX_STEPS):
@@ -472,7 +545,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
             message["_llm_model"] = entry["litellm_params"]["model"]
             if tool_calls:
                 message["tool_calls"] = tool_calls
-            else:
+            elif completion_status(run):
                 message["_final_answer"] = True
             if getattr(reply, "thinking_blocks", None):          # must round-trip for Anthropic thinking
                 message["thinking_blocks"] = reply.thinking_blocks
@@ -488,13 +561,19 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
                            for detail in (getattr(chunk.choices[0].delta, "reasoning_details", None) or [])]
                 if details:
                     message["_reasoning_details"] = details
-            if not message["content"] and not tool_calls:
-                break                                              # nothing to save or do
-            save(message)
+            if message['content'] or tool_calls:
+                save(message)
             run.draft = ""
             if not tool_calls:
-                run.record("completed")
-                break
+                status = completion_status(run)
+                if status:
+                    break
+                if run.steps >= MAX_STEPS:
+                    continue
+                if not await continue_unfinished(run, save):
+                    status = 'blocked'
+                    break
+                continue
 
             await checkpoint()
 
@@ -547,7 +626,7 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         run.emit("reconnect" if status == "interrupted" else "done", {})
 
 
-READ_TOOLS = {"list_files", "read_file", "view_image", "report_progress", "search_available_parts", "check_build_parts"}
+READ_TOOLS = {"list_files", "read_file", "view_image", "report_progress", "search_available_parts", "check_build_parts", "finish_request"}
 
 
 def mode_prompt(options: dict) -> str:
@@ -586,9 +665,22 @@ async def execute_tool(run: Run, ctx: ToolContext, call_id: str, name: str, argu
             run.approvals.pop(approval_id, None)
             run.emit("approval_resolved", {"id": approval_id})
         if not approved:
+            run.outcome = dict(status='needs_input', reason='A required tool was declined or its approval expired.',
+                               next_step='Send a new instruction to continue with an approved action.')
+            run.record('running')
             return ToolResult("Tool denied by the user or approval timed out. Do not retry without a new user instruction.")
     scoped = replace(ctx, emit=lambda event, data: run.emit(event, {**data, "id": call_id} if event == "tool_output" else data))
-    return await dispatch(scoped, name, arguments)
+    if name not in READ_TOOLS:
+        run.build_work = True
+        run.outcome = None  # A new action invalidates any earlier finish declaration.
+        run.record('running')
+    result = await dispatch(scoped, name, arguments)
+    if result.outcome:
+        if result.outcome['status'] == 'answered' and run.build_work:
+            return ToolResult('A build action already started. Continue to publish_model, or report a specific blocker with finish_request.')
+        run.outcome = result.outcome
+        run.record('running')
+    return result
 
 
 def decide(chat_id: str, approval_id: str, approved: bool) -> bool:

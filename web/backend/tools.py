@@ -58,6 +58,7 @@ class ToolResult:
     content: str                                          # what the LLM sees
     models: list[dict] = field(default_factory=list)      # model references added to the chat
     images: list[Path] = field(default_factory=list)      # PNGs to show (and send to vision models)
+    outcome: dict | None = None                         # explicit non-publication turn outcome
 
 
 # --- helpers ---------------------------------------------------------------
@@ -141,6 +142,16 @@ async def t_report_progress(ctx: ToolContext, summary: str) -> ToolResult:
     return ToolResult(summary)
 
 
+async def t_finish_request(ctx: ToolContext, status: str, reason: str, next_step: str) -> ToolResult:
+    if status not in {'answered', 'blocked', 'needs_input'}:
+        raise ToolError('Use answered, blocked or needs_input. A completed build requires publish_model.')
+    if any(not isinstance(value, str) or not value.strip() or len(value) > 2000 for value in (reason, next_step)):
+        raise ToolError('Provide a specific reason and next step, each between 1 and 2000 characters.')
+    outcome = dict(status=status, reason=reason.strip(), next_step=next_step.strip())
+    return ToolResult(json.dumps(outcome) + '\nNow explain this outcome to the user. No model was approved by this tool.',
+                      outcome=outcome)
+
+
 async def t_view_image(ctx: ToolContext, path: str) -> ToolResult:
     source = resolve_path(ctx, path)
     if not source.is_file() or source.stat().st_size > 16 * 1024 * 1024:
@@ -160,8 +171,7 @@ def artifact_url(ctx: ToolContext, path: Path) -> str:
 
 async def _trusted_review(ctx, arguments, timeout):
     """Only fixed toolkit review commands, in a server-owned directory."""
-    env = toolkit.environment()
-    env['LDRAW_DIR'] = str(settings.LDRAW_DIR)
+    env = toolkit.server_environment()
     import publications
     cwd = settings.DATA_DIR / '.publication-review'
     cwd.mkdir(exist_ok=True)
@@ -367,6 +377,15 @@ def _fn(name: str, description: str, properties: dict, required: list[str]) -> d
 
 
 TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
+    "finish_request": (_fn("finish_request",
+        "Record why a request ends without publishing a model. Use answered ONLY for a purely informational "
+        "question before starting build commands or writing files. Use needs_input for a necessary user decision, "
+        "or blocked for an actual service failure, denied permission or exhausted design constraint. "
+        "Provide specific evidence and a continuation step. Temporary setup delays and unfinished work are NOT "
+        "completion: continue building after recovery. Save draft notes first. This tool cannot approve a model.",
+        {"status": {"type": "string", "enum": ["answered", "blocked", "needs_input"]},
+         "reason": {"type": "string"}, "next_step": {"type": "string"}},
+        ["status", "reason", "next_step"]), t_finish_request),
     "search_available_parts": (_fn("search_available_parts",
         "Find construction parts ONLY among verified, available US LEGO Pick a Brick elements. "
         "Returns exact LDraw part and colour codes, USD prices, quantity limits, and observation times. "

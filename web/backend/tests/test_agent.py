@@ -79,8 +79,9 @@ def test_llm_history_sends_only_newest_images(tmp_path: Path):
     assert agent.llm_history(stored, vision=False, resolve=resolve) == []
 
 
-def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: ChatStore, bridge_shop):
-    fake, calls = scripted([
+@pytest.mark.parametrize('premature', [False, True])
+def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: ChatStore, bridge_shop, premature):
+    fake, calls = scripted(([[chunk(content='I have not completed construction yet.')]] if premature else []) + [
         [chunk(role="assistant", content="Building it. "),
          *tool_call_chunks("c1", "run_toolkit", {"arguments": ["build", "examples/bridge.plan.json", "--output", "output/bridge.mpd"]})],
         [*tool_call_chunks("c2", "publish_model", {"path": "output/bridge.mpd", "name": "Agent bridge"})],
@@ -115,6 +116,8 @@ def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: Cha
     assert any(m.get("_images_for_llm") for m in messages)
     assert "NOTES.md" in calls[0]["messages"][0]["content"]
     assert isinstance(calls[-1]["messages"][-1]["content"], list)
+    assert store.run_state(chat['id'])['status'] == 'completed'
+    assert store.run_state(chat['id'])['continuations'] == int(premature)
 
 
 def test_provider_error_ends_turn_but_not_chat(monkeypatch, entry, store: ChatStore):

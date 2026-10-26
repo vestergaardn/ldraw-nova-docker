@@ -112,8 +112,7 @@ def captured_requirements(source,revision, *, strict=False):
         with tempfile.NamedTemporaryFile(dir=folder,delete=False) as stream:
             temporary=Path(stream.name);stream.write(source)
         temporary.chmod(0o600);temporary.replace(snapshot)
-    environment=toolkit.environment()
-    environment['LDRAW_DIR']=str(settings.LDRAW_DIR)
+    environment=toolkit.server_environment()
     result=subprocess.run([str(toolkit.root()/'.venv/bin/python'),'-m','ldraw_tools.purchasing_bom',str(snapshot),
                            *(['--strict'] if strict else [])], cwd=toolkit.root(),
                           env=environment,capture_output=True,text=True,timeout=120)

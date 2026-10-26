@@ -115,3 +115,30 @@ returned 400. Private access and all three verified downloads still passed.
 
 Private reproducible evidence and screenshots are in the workspace's
 `.context/budget-hosted/` and `.context/budget-ui/` directories.
+
+### Build reliability after the barn interruption
+
+Writable build requests no longer finish merely because the AI returns text
+without a tool call. The controller requires a verified publication from that
+request, or a structured `finish_request` outcome: `blocked`, `needs_input`, or
+`answered` for an informational question before build actions start. Old models
+cannot satisfy an edit. Plain unfinished replies receive up to three automatic
+continuations within the existing 150-step limit. Exhaustion leaves the request
+and draft saved with a visible reason. Explicit Stop and declined permissions
+remain authoritative. The budget, continuation count and outcome survive restart.
+LiteLLM and Claude browser sessions use the same completion check.
+
+Server pricing uses disposable private TypeSafe indexes. Builder reference tools
+use `.cache/builder`; trusted validation uses `.server-cache`, inaccessible to
+the builder. `LDRAW_NOVA_CACHE_DIR` selects the toolkit cache without changing
+the standalone default. The image contains prepared indexes for both identities
+and a reference database that does not need writable SQLite sidecar files.
+Startup verifies these resources in a shared background task. Builds wait with
+a visible preparation stage. Stopping one chat does not cancel shared setup.
+Setup failures preserve drafts and prevent AI execution until setup succeeds.
+
+Regression coverage includes the recorded early-stop pattern, bounded retries,
+explicit blockers, planning, edits, restart recovery, approval denial, server
+cache ownership, protected validation caches, setup cancellation/failure, and a
+real render/publication after an early unfinished answer. These checks preserve
+all stock, budget, private-access and explicit-cart requirements.
