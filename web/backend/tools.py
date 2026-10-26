@@ -223,6 +223,11 @@ def _build_feedback(ctx, quote, problems):
     budget_problems = budgets.problems(assessment)
     result = availability.feedback(quote, [*problems, *budget_problems])
     result['budget_assessment'] = assessment
+    guidance = budgets.design_guidance(assessment)
+    if guidance:
+        result['budget_guidance'] = guidance
+        if not problems and not budget_problems:
+            result['next_action'] = guidance['next_action']
     if budget_problems:
         ctx.emit('progress', {'summary': 'Adjusting the build to fit the parts budget.'})
         result['next_action'] = ('Compare the largest costs, search cheaper available colours or parts, and redesign expensive assemblies. '
@@ -399,7 +404,8 @@ TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
     "check_build_parts": (_fn("check_build_parts",
         "Check a saved draft’s complete physical parts and colours against the US LEGO catalogue. "
         "Use after substantial assemblies and before rendering. Repair every reported problem. "
-        "Returns the parts subtotal, remaining budget, excess cost and largest cost contributors. "
+        "Returns the parts subtotal, remaining budget, excess cost, largest cost contributors and priced-upgrade guidance. "
+        "For budgeted builds, use the remaining allowance for useful improvements toward the permitted maximum. "
         "A passing draft check does not publish or reserve stock; publish_model checks again after rendering.",
         {"path": {"type": "string"}, "refresh": {"type": "boolean", "description": "Refresh selected elements from LEGO; default false uses current catalogue observations"}},
         ["path"]), t_check_build_parts),

@@ -46,7 +46,7 @@ export default function BudgetDialog({ initial, starting, onChoose, onCancel, re
     }}>
     <form onSubmit={submit}>
       <h2 id={`${id}-title`}>{starting ? 'Set a parts budget' : 'Change parts budget'}</h2>
-      <p id={`${id}-help`}>Choose a budget for the best design within it. You can also skip this step.</p>
+      <p id={`${id}-help`}>Aim as close as possible to the maximum with useful detail and solid construction. You can skip the budget.</p>
       <label htmlFor={`${id}-amount`}>Parts budget (USD)</label>
       <div className="budget-input"><span aria-hidden="true">$</span><input ref={input} id={`${id}-amount`} type="text"
         inputMode="decimal" autoComplete="off" spellCheck={false} value={value} disabled={saving}
@@ -55,7 +55,7 @@ export default function BudgetDialog({ initial, starting, onChoose, onCancel, re
       <p id={`${id}-limit`} className="budget-limit" aria-live="polite">{amount === null
         ? 'A $100.00 budget allows up to $105.00.'
         : `${money(amount)} budget → ${money(budgetChoice(amount).maximum_cents!)} maximum`}</p>
-      <p id={`${id}-costs`} className="muted small">The design can use up to 5% extra. Service fees, shipping, and tax are separate.</p>
+      <p id={`${id}-costs`} className="muted small">The target includes the 5% allowance. Service fees, shipping, and tax are separate.</p>
       <p className="muted small">This budget carries over to later edits. You can change or remove it when the build is idle.</p>
       {error && <p id={`${id}-error`} className="warn-text" role="alert">{error}</p>}
       <div className="budget-actions">

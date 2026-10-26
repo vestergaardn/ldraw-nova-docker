@@ -88,6 +88,28 @@ def require(budget, quote):
     return assessment
 
 
+def design_guidance(assessment):
+    """Design advice is separate from immutable prices and the hard spending cap."""
+    maximum = assessment['budget']['maximum_cents']
+    if maximum is None:
+        return None
+    remaining = assessment['remaining_allowance_cents']
+    if remaining is None:
+        action = 'Resolve every missing price before choosing further improvements.'
+    elif remaining < 0:
+        action = 'Repair the excess cost while preserving the requested concept and defining features.'
+    elif remaining == 0:
+        action = 'The parts cost reaches the maximum. Continue geometry, visual review and fresh publication checks.'
+    else:
+        action = (f'${remaining/100:.2f} remains before the ${maximum/100:.2f} design target. '
+                  'Before final rendering, compare and price useful upgrades to scale, structure, detail, interiors or accessories. '
+                  'Keep improving toward the maximum while preserving the requested concept and available parts. '
+                  'Do not settle for the first affordable design. Avoid filler pieces and duplicate features added only to spend money. '
+                  'Check the revised draft again. If no useful improvement fits, explain the remaining amount and the limiting constraint.')
+    return dict(objective='approach_maximum_with_useful_improvements', target_cents=maximum,
+                remaining_cents=remaining, next_action=action)
+
+
 def continuation(budget):
     budget = normalize(budget)
     if budget['status'] != 'set':
@@ -102,11 +124,14 @@ def instruction(budget):
         return '\nNo parts spending limit was selected. All stock and publication checks still apply.'
     return (f"\nParts budget: ${budget['amount_cents']/100:.2f} USD. "
             f"The absolute permitted maximum is ${budget['maximum_cents']/100:.2f}, including the fixed 5% allowance. "
-            'Only LEGO parts count; service fees, shipping and tax are separate. Aim within the target. '
-            'Use the allowance only for a meaningful design improvement. Preserve the requested concept, proportions and defining details. '
+            f"Aim as close as possible to ${budget['maximum_cents']/100:.2f} without exceeding it: the maximum is the design target. "
+            'Only LEGO parts count; service fees, shipping and tax are separate. '
+            'Use the allowance as part of that target. Preserve the requested concept, proportions and defining details. '
             'Plan scale and major assemblies against verified prices before final rendering. Compare colours, unit prices and repeated quantities. '
             'Use search_available_parts with max_unit_price when helpful. Check each substantial assembly with check_build_parts. '
-            'Reduce expensive construction or scale before sacrificing defining features. Spend spare budget only when it improves the design. '
-            'Do not add unnecessary pieces to use up the budget. If a check exceeds the maximum, redesign and check again. '
-            'Explain cost-driven changes and the final parts cost. If no suitable design fits within runtime limits, retain the draft and explain '
+            'Do not stop at the first affordable draft. Review the remaining allowance and compare priced upgrades before final rendering. '
+            'Invest it in useful scale, structural strength, finer detail, furnished interiors and relevant accessories. '
+            'Avoid filler pieces or duplicate features added only to spend money. If a check exceeds the maximum, redesign and check again. '
+            'Explain the improvements, final parts cost and remaining amount. If no useful improvement fits the remaining amount, explain why. '
+            'If no suitable design fits within runtime limits, retain the draft and explain '
             'whether a higher budget or a simpler scope could help. Never claim a global optimum or bypass publication checks.')

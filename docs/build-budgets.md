@@ -28,10 +28,15 @@ the original result and separately compares the latest quote with that original
 budget. Missing prices are unknown, never zero. Delivered geometry never changes
 when prices change.
 
-The design objective is qualitative, not proof of a globally optimal model.
-The AI should preserve the concept and defining details, compare available
-colours and construction, and avoid filler pieces. Over-budget drafts cannot
-publish. Exhausted work limits retain drafts and explain continuation options.
+The design target is the permitted maximum, including the 5% allowance. The AI
+must review unused allowance and compare priced, useful improvements before
+final rendering, rather than settling for the first affordable draft. Scale,
+structural strength, detail, interiors and relevant accessories can use the
+remaining amount. Draft checks return this guidance with the exact headroom.
+If no useful improvement fits, the final response explains the remainder and
+constraint. This is a design objective, not proof of a global optimum or a
+minimum-spending requirement. Filler pieces remain discouraged. Over-budget
+drafts cannot publish. Exhausted work limits retain drafts and explain continuation options.
 Cart requests remain explicit; budget controls never call cart endpoints.
 
 ## Verification

@@ -52,6 +52,47 @@ def test_exact_limit_and_one_cent_over_exclude_fees():
     assert budgets.require(None, quote(100000))['status'] == 'unbudgeted'
 
 
+def test_budget_design_targets_maximum_with_exact_headroom_without_changing_prices():
+    original = quote(4098)
+    snapshot = deepcopy(original)
+    assessment = budgets.assess(choice(20000), original)
+    guidance = budgets.design_guidance(assessment)
+    assert guidance['target_cents'] == 21000
+    assert guidance['remaining_cents'] == 16902
+    assert '$169.02' in guidance['next_action'] and '$210.00' in guidance['next_action']
+    assert 'compare and price useful upgrades' in guidance['next_action']
+    assert original == snapshot and assessment['subtotal'] == 4098
+    assert budgets.require(choice(20000), original)['subtotal'] == 4098  # no artificial minimum purchase
+
+
+def test_budget_design_guidance_respects_limit_missing_prices_and_skipped_budget():
+    assert budgets.design_guidance(budgets.assess(None, quote())) is None
+    exact = budgets.design_guidance(budgets.assess(choice(10000), quote(10500)))
+    assert exact['remaining_cents'] == 0 and 'reaches the maximum' in exact['next_action']
+    over = budgets.design_guidance(budgets.assess(choice(10000), quote(10501)))
+    assert over['remaining_cents'] == -1 and 'Repair' in over['next_action']
+    incomplete = quote(); incomplete['lines'][0]['unit_price'] = None
+    missing = budgets.design_guidance(budgets.assess(choice(10000), incomplete))
+    assert missing['remaining_cents'] is None and 'missing price' in missing['next_action']
+
+
+def test_draft_check_exposes_maximum_target_after_real_quantity_accounting(setup):
+    ctx,db,source,_ = setup
+    result = json.loads(asyncio.run(tools.t_check_build_parts(replace(ctx, budget=choice(20000)), 'draft.mpd')).content)
+    assert result['status'] == 'available'
+    assert result['budget_guidance']['target_cents'] == 21000
+    assert result['budget_guidance']['remaining_cents'] == 21000 - result['budget_assessment']['subtotal']
+    assert result['next_action'] == result['budget_guidance']['next_action']
+    assert not db.records and not ctx.store.models(ctx.chat_id)
+
+
+def test_budget_prompt_targets_the_allowance_without_weakening_publication():
+    prompt = budgets.instruction(choice(20000))
+    assert 'Aim as close as possible to $210.00 without exceeding it' in prompt
+    assert 'compare priced upgrades before final rendering' in prompt
+    assert 'Never claim a global optimum or bypass publication checks' in prompt
+
+
 @pytest.mark.parametrize('field,value', [('unit_price',None), ('unit_price',-1), ('quantity',True), ('line_total',0)])
 def test_incomplete_or_inconsistent_prices_cannot_pass(field,value):
     data=quote();data['lines'][0][field]=value

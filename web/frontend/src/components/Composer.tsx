@@ -164,7 +164,7 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
     </div>)}</div>}
     {error && <div className="banner error" role="alert">{error}</div>}
     <div className="composer-budget">
-      <span>{budget.status === 'set' ? `Parts budget ${money(budget.amount_cents!)} · up to ${money(budget.maximum_cents!)}` :
+      <span>{budget.status === 'set' ? `Parts budget ${money(budget.amount_cents!)} · aim for ${money(budget.maximum_cents!)} maximum` :
         budget.status === 'pending' ? 'Choose a parts budget before building' : 'No parts budget'}</span>
       {onBudgetChange && <><button type="button" disabled={disabled} onClick={() => setBudgetDialog('edit')}>
         {budget.status === 'set' ? 'Change budget' : 'Set budget'}</button>
