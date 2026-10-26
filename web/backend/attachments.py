@@ -33,7 +33,7 @@ def validate_documents(documents: list[dict], images: list[str] = ()) -> list[Do
                 or name.startswith(".") or any(c in name for c in "/\\") or any(ord(c) < 32 for c in name)):
             raise ValueError("Use a document filename without folders or control characters")
         if Path(name).suffix.lower() not in DOCUMENT_SUFFIXES:
-            raise ValueError("Choose a PDF, text, Office or LDraw document. Use the image button for images.")
+            raise ValueError("Choose a PDF, text, Office or model file (.ldr, .mpd, .dat). Use the image button for images.")
         if not isinstance(encoded, str) or len(encoded) > MAX_DOCUMENT_BYTES * 4 // 3 + 200:
             raise ValueError("Each document must be at most 5 MB")
         match = re.fullmatch(r"data:[^,;]*;base64,([A-Za-z0-9+/=]*)", encoded)

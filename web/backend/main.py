@@ -73,7 +73,7 @@ async def lifespan(_app: FastAPI):
         await browser_auth.shutdown()
 
 
-app = FastAPI(title="LDraw Nova agent chat", lifespan=lifespan)
+app = FastAPI(title="LEGO Nova agent chat", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)

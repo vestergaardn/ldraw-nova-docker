@@ -117,7 +117,7 @@ export default function Composer({ llmId, onLlmChange, onSend, onStop, running, 
       setError("Choose PNG, JPEG or WebP images."); return;
     }
     if (kind === "document" && files.some(f => !DOCUMENT_TYPES.split(",").includes("." + f.name.split(".").pop()?.toLowerCase()))) {
-      setError("Choose a PDF, text, Office or LDraw document. Use the image button for images."); return;
+      setError("Choose a PDF, text, Office or model file (.ldr, .mpd, .dat). Use the image button for images."); return;
     }
     setBusy(true);
     try {

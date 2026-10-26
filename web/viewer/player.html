@@ -12,7 +12,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LDraw Player</title>
+<title>LEGO Nova Build Player</title>
 <style>
   :root {
     --bg: #f2f2f2; --bar: rgba(255,255,255,.92); --fg: #1d1d1f; --muted: #6b6b70;
@@ -80,7 +80,7 @@
 </head>
 <body>
 <div id="top" class="bar">
-  <span id="title"><strong id="file">LDraw Player</strong><span id="parts"></span></span>
+  <span id="title"><strong id="file">LEGO Nova Build Player</strong><span id="parts"></span></span>
   <span class="segmented" role="group" aria-label="Camera">
     <button data-camera="inspect" aria-pressed="true" title="Orbit, pan and zoom, also into the model">Inspect</button>
     <button data-camera="walk" aria-pressed="false" title="First person: mouse to look, W A S D to move">Walk</button>
@@ -150,7 +150,7 @@ async function main() {
   if (!modelUrl) { setStatus('No model given: add ?model=<url of an .ldr/.mpd file>', true); return; }
   const fileName = decodeURIComponent(modelUrl.split('/').pop().split('?')[0]);
   $('file').textContent = fileName;
-  document.title = fileName + ' · LDraw Player';
+  document.title = fileName + ' · LEGO Nova Build Player';
   if (Number.isFinite(knownParts)) $('parts').textContent = ', ' + plural(knownParts, 'part');
 
   try {

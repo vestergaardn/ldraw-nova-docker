@@ -91,7 +91,7 @@ class Run:
         elif event == "tool_start":
             data.setdefault("started_at", time.time())
             self.phase = {
-                "run_toolkit": "Running LDraw Nova",
+                "run_toolkit": "Running the model builder",
                 "run_python": "Running the model generator",
                 "run_shell": "Running a build command",
                 "publish_model": "Checking and publishing the model",

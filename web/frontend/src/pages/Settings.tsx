@@ -27,7 +27,7 @@ export default function Settings() {
     <EnvironmentSettings />
     <section aria-labelledby="agents-heading">
       <header className="page-head settings-models-head"><div><h2 id="agents-heading">Agents</h2>
-        <p className="muted small">Building LDraw models needs image input to inspect designs, reasoning to plan builds, and tool calling to run the app’s building tools.</p>
+        <p className="muted small">Building LEGO models needs image input to inspect designs, reasoning to plan builds, and tool calling to run the app’s building tools.</p>
         <p className="muted small">Choose a provider, click Add agent, and select a preset. Connect a browser account or add an API key, then click Test to check the connection and available model details.</p>
       </div></header>
       {error && <div className="banner error" role="alert">{error}</div>}

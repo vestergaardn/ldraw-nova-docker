@@ -130,7 +130,7 @@ export default function PartsQuote({ modelUrl, initial, availability, budget }: 
           <p className="muted small">{quote.fees.length ? quote.fees.map(f => `${f.name}: ${money(f.amount)}`).join(' · ') : 'Service fees need checkout confirmation.'} LEGO calculates shipping and tax at checkout.</p>
           <div className="parts-table-wrap"><table className="parts-table"><thead><tr><th>Part / colour</th><th>Quantity</th><th>Element</th><th>Price</th><th>Status</th></tr></thead><tbody>
             {quote.lines.map(line => <tr key={`${line.part}-${line.color}`}>
-              <td><strong>{line.name || line.part}</strong><small>{line.part} · LDraw colour {line.color}</small></td>
+              <td><strong>{line.name || line.part}</strong><small>{line.part} · Model colour {line.color}</small></td>
               <td>{line.quantity}<small>Order limit: {line.max_quantity ?? 'Unknown'}</small></td><td>{line.element_id || 'Unresolved'}</td>
               <td>{line.line_total === null ? 'Unknown' : money(line.line_total)}</td>
               <td>{labels[line.state]}{line.stale && <small>Needs price refresh</small>}{line.issue && <small>{line.issue.replaceAll('_', ' ')}</small>}

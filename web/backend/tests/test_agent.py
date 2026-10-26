@@ -42,8 +42,9 @@ def scripted(responses: list[list[ModelResponseStream]]):
 
 
 @pytest.fixture
-def store() -> ChatStore:
-    return ChatStore(settings.CHATS_DIR, settings.OUTPUT_DIR)
+def store(tmp_path) -> ChatStore:
+    # Recovery must see only this case, not unfinished chats from API tests.
+    return ChatStore(settings.CHATS_DIR / tmp_path.name, settings.OUTPUT_DIR)
 
 
 @pytest.fixture
@@ -81,11 +82,14 @@ def test_llm_history_sends_only_newest_images(tmp_path: Path):
 
 @pytest.mark.parametrize('premature', [False, True])
 def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: ChatStore, bridge_shop, premature):
+    # Parameter cases share the model collection, so give each its own title.
+    name = "Agent bridge early" if premature else "Agent bridge"
+    stem = "agent-bridge-early-v1" if premature else "agent-bridge-v1"
     fake, calls = scripted(([[chunk(content='I have not completed construction yet.')]] if premature else []) + [
         [chunk(role="assistant", content="Building it. "),
          *tool_call_chunks("c1", "run_toolkit", {"arguments": ["build", "examples/bridge.plan.json", "--output", "output/bridge.mpd"]})],
-        [*tool_call_chunks("c2", "publish_model", {"path": "output/bridge.mpd", "name": "Agent bridge"})],
-        [*tool_call_chunks("c3", "view_image", {"path": str(settings.GENERATED_DIR / "agent-bridge-v1.png")})],
+        [*tool_call_chunks("c2", "publish_model", {"path": "output/bridge.mpd", "name": name})],
+        [*tool_call_chunks("c3", "view_image", {"path": str(settings.GENERATED_DIR / f"{stem}.png")})],
         [chunk(content="Done.")],
     ])
     monkeypatch.setattr(agent.litellm, "acompletion", fake)
@@ -108,7 +112,7 @@ def test_turn_runs_tool_saves_renders_and_answers(monkeypatch, entry, store: Cha
     messages = store.messages(chat["id"])
     assert messages[-1]["content"] == "Done.", messages
     [ref] = store.models(chat["id"])
-    model = settings.GENERATED_DIR / "agent-bridge-v1.mpd"
+    model = settings.GENERATED_DIR / f"{stem}.mpd"
     assert prepared == [model.resolve()], "The finished turn must start the guide for its model"
     assert model.read_bytes() == (store.work_dir(chat["id"]) / "bridge.mpd").read_bytes()
     assert model.with_suffix(".png").stat().st_size > 1000

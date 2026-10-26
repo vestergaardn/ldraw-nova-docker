@@ -18,7 +18,7 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="brand">
         <span className="brand-mark" aria-hidden />
-        LDraw Nova
+        LEGO Nova
       </div>
       <NavLink className="button new-chat" to="/new">
         + New chat

@@ -130,7 +130,7 @@ async function main() {
   }
   const fileName = decodeURIComponent(modelUrl.split("/").pop()!.split("?")[0]);
   $("file").textContent = fileName;
-  document.title = `${fileName} · LDraw MR`;
+  document.title = `${fileName} · LEGO Nova Mixed Reality`;
   const knownParts = Number(params.get("parts"));
   if (knownParts > 0) $("parts").textContent = `, ${plural(knownParts, "part")}`;
 

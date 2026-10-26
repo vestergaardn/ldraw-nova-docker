@@ -410,7 +410,7 @@ TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
         {"path": {"type": "string"}, "refresh": {"type": "boolean", "description": "Refresh selected elements from LEGO; default false uses current catalogue observations"}},
         ["path"]), t_check_build_parts),
     "run_toolkit": (_fn("run_toolkit",
-        "Run the standalone LDraw Nova CLI. All commands are available: doctor, spec, discover, catalog, "
+        "Run the standalone model-building CLI. All commands are available: doctor, spec, discover, catalog, "
         "study, extract, examples, build, validate, inspect, render, compare-bom, manual, vehicle, spaceship, "
         "technic, mechanism and more. Read instructions.md and relevant docs first. Output goes under output/. "
         "Arguments are an array, without shell quoting or the executable. Use --help to inspect subcommands.",
@@ -430,7 +430,7 @@ TOOLS: dict[str, tuple[dict, Callable[..., Awaitable[ToolResult]]]] = {
     "report_progress": (_fn("report_progress", "Show a concise progress update: current phase, design decisions, "
         "completed checks, remaining work. Use throughout substantial builds, without private internal reasoning.",
         {"summary": {"type": "string"}}, ["summary"]), t_report_progress),
-    "run_python": (_fn("run_python", "Run Python with the LDraw Nova virtualenv (pyldraw3, numpy, jsonschema). "
+    "run_python": (_fn("run_python", "Run Python with the model builder virtualenv (pyldraw3, numpy, jsonschema). "
         "Working directory has the toolkit repository layout. Use its builder/serializer; write under output/. "
         "Code is saved for reproducibility. Call publish_model for user-visible model cards.",
         {"code": {"type": "string"}, "timeout": {"type": "integer", "description": "Seconds, default 60, max 1800"}},

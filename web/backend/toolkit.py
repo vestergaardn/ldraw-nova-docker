@@ -26,7 +26,7 @@ BUILDER_GUIDES = (
 def root() -> Path:
     path = settings.TOOLKIT_DIR
     if not (path / "instructions.md").is_file() or not (path / ".venv/bin/python").exists():
-        raise ValueError("LDraw toolkit is missing. Rebuild with docker compose up -d --build (requires ../ldraw-nova).")
+        raise ValueError("The model-building toolkit is missing. Rebuild the server with its companion toolkit checkout.")
     return path
 
 

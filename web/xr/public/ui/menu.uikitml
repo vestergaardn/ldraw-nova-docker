@@ -145,7 +145,7 @@
   }
 </style>
 <Panel class="panel-root">
-  <div id="title" class="heading">LDraw model</div>
+  <div id="title" class="heading">LEGO model</div>
   <div class="columns">
     <div class="controls">
       <div class="section">CONTROLS</div>

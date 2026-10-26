@@ -17,7 +17,7 @@ import toolkit
 
 # PDF layout and font changes reuse the already verified geometry renders.
 RENDER_VERSION = '2:creator-31134-v1:plan-4:outfit-1'
-VERSION = '3:creator-31134-v1:plan-4:outfit-2:cover-2'
+VERSION = '4:creator-31134-v1:plan-4:outfit-2:cover-2:lego-nova'
 TIMEOUT = 3500
 MAX_PENDING = 4
 DEFAULTS = dict(template='creator-31134', improve=True, print_format='native')

@@ -16,7 +16,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LDraw Viewer</title>
+<title>LEGO Nova Viewer</title>
 <style>
   :root {
     --bg: #f2f2f2; --bar: rgba(255,255,255,.92); --fg: #1d1d1f; --muted: #6b6b70;
@@ -59,7 +59,7 @@
 </head>
 <body>
 <div id="bar">
-  <span id="title"><strong id="file">LDraw Viewer</strong><span id="parts"></span></span>
+  <span id="title"><strong id="file">LEGO Nova Viewer</strong><span id="parts"></span></span>
   <span class="segmented" role="group" aria-label="Rendering">
     <button data-mode="normal" aria-pressed="false" title="Fast outlined rendering">Normal</button>
     <button data-mode="high" aria-pressed="true" title="Realistic materials, lighting and shadows">High</button>
@@ -127,7 +127,7 @@ var scene = null;
   const fileName = decodeURIComponent(modelUrl.split('/').pop().split('?')[0]);
   const modelDir = modelUrl.slice(0, modelUrl.lastIndexOf('/') + 1);
   document.getElementById('file').textContent = fileName;
-  document.title = fileName + ' · LDraw Viewer';
+  document.title = fileName + ' · LEGO Nova Viewer';
   const download = document.getElementById('download');
   download.href = modelUrl + (modelUrl.includes('?') ? '&' : '?') + 'download=1';
   download.setAttribute('download', fileName);
